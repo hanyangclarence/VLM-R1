@@ -5,12 +5,13 @@ PyTorch Module defining OpenVLA as a lightweight wrapper around a PrismaticVLM; 
 discretizing actions with the ActionTokenizer.
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 import numpy as np
 import torch
-from PIL import Image
+from PIL.Image import Image as Img
 from transformers import LlamaTokenizerFast
+from transformers.models.qwen2.tokenization_qwen2_fast import Qwen2TokenizerFast
 
 from prismatic.models.vlms.prismatic import PrismaticVLM
 from prismatic.overwatch import initialize_overwatch
@@ -31,10 +32,26 @@ class OpenVLA(PrismaticVLM):
         super().__init__(*args, **kwargs)
         self.norm_stats = norm_stats
         self.action_tokenizer = action_tokenizer
+    
+    def predict_action_v2(self,input_ids, pixel_values,**kwargs: str) -> np.ndarray:
+        autocast_dtype = self.llm_backbone.half_precision_dtype
+        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=True):
+            # fmt: off
+            generated_ids = super(PrismaticVLM, self).generate(
+                input_ids=input_ids,                            # Shape: [1, seq]
+                pixel_values=pixel_values,                      # Shape: [1, (opt T,) 3, res, res] or Dict[str, ...]
+                max_new_tokens=7,
+                **kwargs
+            )
+            # fmt: on
+
+        # Extract predicted action tokens and translate into (normalized) continuous actions
+        predicted_action_token_ids = generated_ids[0, -7 :]
+        return predicted_action_token_ids
 
     @torch.inference_mode()
     def predict_action(
-        self, image: Image, instruction: str, unnorm_key: Optional[str] = None, **kwargs: str
+        self, image: Union[Img, List[Img]], instruction: str, unnorm_key: Optional[str] = None, **kwargs: str
     ) -> np.ndarray:
         """
         Core function for VLA inference; maps input image and task instruction to continuous action (de-tokenizes).
@@ -46,7 +63,7 @@ class OpenVLA(PrismaticVLM):
 
         @return Unnormalized (continuous) action vector --> end-effector deltas.
         """
-        image_transform, tokenizer = self.vision_backbone.image_transform, self.llm_backbone.tokenizer
+        image_transform, tokenizer = self.vision_backbone.get_image_transform(), self.llm_backbone.tokenizer
 
         # Build VLA Prompt
         prompt_builder = self.get_prompt_builder()
@@ -62,6 +79,9 @@ class OpenVLA(PrismaticVLM):
                 input_ids = torch.cat(
                     (input_ids, torch.unsqueeze(torch.Tensor([29871]).long(), dim=0).to(input_ids.device)), dim=1
                 )
+        elif isinstance(tokenizer, Qwen2TokenizerFast):
+            # do nothing here. I think...
+            pass
         else:
             raise ValueError(f"Unsupported `tokenizer` type = {type(tokenizer)}")
 
@@ -80,12 +100,12 @@ class OpenVLA(PrismaticVLM):
             # fmt: off
             generated_ids = super(PrismaticVLM, self).generate(
                 input_ids=input_ids,                            # Shape: [1, seq]
-                pixel_values=pixel_values,                      # Shape: [1, 3, res, res] or Dict[str, ...]
+                pixel_values=pixel_values,                      # Shape: [1, (opt T,) 3, res, res] or Dict[str, ...]
                 max_new_tokens=self.get_action_dim(unnorm_key),
                 **kwargs
             )
             # fmt: on
-
+        
         # Extract predicted action tokens and translate into (normalized) continuous actions
         predicted_action_token_ids = generated_ids[0, -self.get_action_dim(unnorm_key) :]
         normalized_actions = self.action_tokenizer.decode_token_ids_to_actions(predicted_action_token_ids.cpu().numpy())

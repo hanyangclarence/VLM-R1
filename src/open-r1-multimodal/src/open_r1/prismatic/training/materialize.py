@@ -38,6 +38,7 @@ def get_train_strategy(
     reduce_in_full_precision: bool = False,
     mixed_precision_dtype: torch.dtype = torch.bfloat16,
     worker_init_fn: Optional[Callable[[int], None]] = None,
+    save_every_n_steps: Optional[int] = None,
 ) -> TrainingStrategy:
     if train_strategy in TRAIN_STRATEGIES:
         strategy_cfg = TRAIN_STRATEGIES[train_strategy]
@@ -59,6 +60,7 @@ def get_train_strategy(
             reduce_in_full_precision=reduce_in_full_precision,
             mixed_precision_dtype=mixed_precision_dtype,
             worker_init_fn=worker_init_fn,
+            save_every_n_steps=save_every_n_steps,
             **strategy_cfg["kwargs"],
         )
         return strategy

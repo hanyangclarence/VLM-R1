@@ -15,7 +15,13 @@ from timm.models.vision_transformer import Block, VisionTransformer
 from torch.distributed.fsdp.wrap import _module_wrap_policy, _or_policy, transformer_auto_wrap_policy
 from torchvision.transforms import Compose, Resize
 
-from prismatic.models.backbones.vision.base_vision import ImageTransform, LetterboxPad, VisionBackbone, unpack_tuple
+from prismatic.models.backbones.vision.base_vision import (
+    ImageTransform,
+    LetterboxPad,
+    VisionBackbone,
+    compute_sequence_patches,
+    unpack_tuple,
+)
 
 # Registry =>> Supported DinoSigLIP Pairs (as TIMM identifiers)
 DINOSigLIP_VISION_BACKBONES = {
@@ -41,8 +47,19 @@ class DinoSigLIPImageTransform:
 
 
 class DinoSigLIPViTBackbone(VisionBackbone):
-    def __init__(self, vision_backbone_id: str, image_resize_strategy: str, default_image_size: int = 224) -> None:
-        super().__init__(vision_backbone_id, image_resize_strategy, default_image_size=default_image_size)
+    def __init__(
+        self,
+        vision_backbone_id: str,
+        image_resize_strategy: str,
+        default_image_size: int = 224,
+        image_sequence_len: int = 1,
+    ) -> None:
+        super().__init__(
+            vision_backbone_id,
+            image_resize_strategy,
+            default_image_size=default_image_size,
+            image_sequence_len=image_sequence_len,
+        )
         self.dino_timm_path_or_url = DINOSigLIP_VISION_BACKBONES[vision_backbone_id]["dino"]
         self.siglip_timm_path_or_url = DINOSigLIP_VISION_BACKBONES[vision_backbone_id]["siglip"]
 
@@ -141,9 +158,16 @@ class DinoSigLIPViTBackbone(VisionBackbone):
 
     def forward(self, pixel_values: Dict[str, torch.Tensor]) -> torch.Tensor:
         """Runs the transformed image/pixel tensors through each vision backbone, returning concatenated patches."""
-        dino_patches = self.dino_featurizer(pixel_values["dino"])
-        siglip_patches = self.siglip_featurizer(pixel_values["siglip"])
-
+        if self.image_sequence_len == 1:
+            dino_patches = self.dino_featurizer(pixel_values["dino"])
+            siglip_patches = self.siglip_featurizer(pixel_values["siglip"])
+        else:
+            featurizers = {
+                "dino": self.dino_featurizer,
+                "siglip": self.siglip_featurizer,
+            }
+            patches = compute_sequence_patches(pixel_values, featurizers, self.image_sequence_len)
+            dino_patches, siglip_patches = patches["dino"], patches["siglip"]
         return torch.cat([dino_patches, siglip_patches], dim=2)
 
     @property
@@ -157,7 +181,7 @@ class DinoSigLIPViTBackbone(VisionBackbone):
     @property
     def num_patches(self) -> int:
         assert self.dino_featurizer.patch_embed.num_patches == self.siglip_featurizer.patch_embed.num_patches
-        return self.dino_featurizer.patch_embed.num_patches
+        return self.dino_featurizer.patch_embed.num_patches * self.image_sequence_len
 
     @property
     def half_precision_dtype(self) -> torch.dtype:

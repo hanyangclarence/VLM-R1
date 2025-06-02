@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Type, Union
 
 import torch
-from PIL import Image
+from PIL.Image import Image as Img
 from torch.distributed.fsdp.wrap import _module_wrap_policy, _or_policy
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
@@ -591,7 +591,7 @@ class PrismaticVLM(VLM):
         return gen_texts if return_string_probabilities is None else gen_probabilities
 
     @torch.inference_mode()
-    def generate(self, image: Image, prompt_text: str, **kwargs: str) -> str:
+    def generate(self, image: Union[Img, List[Img]], prompt_text: str, **kwargs: str) -> str:
         # For now, only support generation with a batch size of 1 for simplicity
         image_transform, tokenizer = self.vision_backbone.image_transform, self.llm_backbone.tokenizer
 
@@ -612,6 +612,7 @@ class PrismaticVLM(VLM):
             generated_ids = super().generate(
                 input_ids=input_ids,            # Shape: [1, seq]
                 pixel_values=pixel_values,      # Shape: [1, 3, res, res] or Dict[str, Shape[1, 3, res, res]]
+                                                #  FOR MULTI-IMAGE Shape: [1, T, 3, res, res]
                 **kwargs
             )
             # fmt: on

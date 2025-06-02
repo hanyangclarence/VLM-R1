@@ -11,7 +11,7 @@ Transformer model for feature extraction.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from functools import partial
-from typing import Any, Callable, Dict, Optional, Protocol, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple, Union
 
 import timm
 import torch
@@ -21,6 +21,8 @@ from PIL.Image import Image
 from timm.models.vision_transformer import Block, VisionTransformer
 from torch.distributed.fsdp.wrap import _module_wrap_policy, _or_policy, transformer_auto_wrap_policy
 from torchvision.transforms import Compose, Resize
+
+from prismatic.util.torch_utils import merge_two_dims, sequence_combine_call_split
 
 
 # === Utility Functions for Monkey-Patching ===
@@ -32,9 +34,46 @@ def unpack_tuple(fn: Callable[[Any], Tuple[Any]]) -> Callable[[Any], Any]:
     return wrapper
 
 
+# === Utility Function for handling image sequences ===
+def compute_sequence_patches(pixel_values: Dict, featurizers: Dict, seq_len: int):
+    patches = {}
+    for k in pixel_values:
+        # must be of shape B x T x C x H x W
+        assert len(pixel_values[k].shape) == 5, "Pixel values must be (B, T, C, H, W)"
+        assert pixel_values[k].shape[1] >= seq_len, "Sequence length was too short!"
+        trunc_pixels_k = pixel_values[k][:, :seq_len]
+
+        # will output B x (T*featurizer.num_patches) x embed_dim
+        patches[k] = merge_two_dims(sequence_combine_call_split(trunc_pixels_k, featurizers[k]), start_dim=1)
+    return patches
+
+
 # === Interface for an Image Transform ===
 class ImageTransform(Protocol):
-    def __call__(self, img: Image, **kwargs: str) -> Union[torch.Tensor, Dict[str, torch.Tensor]]: ...
+    def __call__(
+        self, img: Union[Image, List[Image]], **kwargs: str
+    ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]: ...
+
+
+# === Special Image Transform Wrapper for sequences ===
+class WrapSequenceImageTransform(ImageTransform):
+    """Performs transforms and returns a tensor that with a sequence len dimension"""
+
+    def __init__(self, base_transform: ImageTransform, sequence_len: int):
+        self.base_transform = base_transform
+        self.sequence_len = sequence_len
+        assert self.sequence_len > 1
+
+    def __call__(self, img: Union[Image, List[Image]], **kwargs: str) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
+        assert isinstance(img, list) and len(img) == self.sequence_len
+        outputs = [self.base_transform(image, **kwargs) for image in img]
+
+        # return either a dict w/ stacked tensors along dim=0, or a single tensor
+        # output tensors are (SEQ_LEN, C, H, W)
+        if isinstance(outputs[0], dict):
+            return {k: torch.stack([o[k] for o in outputs], dim=0) for k in outputs[0]}
+        else:
+            return torch.stack(outputs, dim=0)
 
 
 # === Custom Torchvision Image Transforms ===
@@ -52,18 +91,28 @@ class LetterboxPad:
 
 # === Abstract Base Class for arbitrary Vision Backbones ===
 class VisionBackbone(nn.Module, ABC):
-    def __init__(self, vision_backbone_id: str, image_resize_strategy: str, default_image_size: int = 224) -> None:
+    def __init__(
+        self,
+        vision_backbone_id: str,
+        image_resize_strategy: str,
+        default_image_size: int = 224,
+        image_sequence_len: int = 1,
+    ) -> None:
         super().__init__()
         self.identifier: str = vision_backbone_id
         self.image_resize_strategy: str = image_resize_strategy
         self.default_image_size: int = default_image_size
+        self.image_sequence_len: int = image_sequence_len
 
         # Instance attributes for a Vision Backbone
         self.featurizer: nn.Module = None
         self.image_transform: ImageTransform = None
 
     def get_image_transform(self) -> ImageTransform:
-        return self.image_transform
+        if self.image_sequence_len == 1:
+            return self.image_transform
+        else:
+            return WrapSequenceImageTransform(self.image_transform, sequence_len=self.image_sequence_len)
 
     @abstractmethod
     def get_fsdp_wrapping_policy(self) -> Callable: ...
@@ -98,9 +147,15 @@ class TimmViTBackbone(VisionBackbone, ABC):
         timm_path_or_url: str,
         image_resize_strategy: str,
         default_image_size: int = 224,
+        image_sequence_len: int = 1,
         override_act_layer: Optional[str] = None,
     ) -> None:
-        super().__init__(vision_backbone_id, image_resize_strategy, default_image_size=default_image_size)
+        super().__init__(
+            vision_backbone_id,
+            image_resize_strategy,
+            default_image_size=default_image_size,
+            image_sequence_len=image_sequence_len,
+        )
         self.timm_path_or_url = timm_path_or_url
         self.override_act_layer = override_act_layer
         self.dtype = torch.bfloat16
@@ -188,7 +243,12 @@ class TimmViTBackbone(VisionBackbone, ABC):
 
     def forward(self, pixel_values: Union[torch.Tensor, Dict[str, torch.Tensor]]) -> torch.Tensor:
         """Runs transformed image/pixel tensor through vision backbone, returning _all_ patch features."""
-        return self.featurizer(pixel_values)
+        if self.image_sequence_len == 1:
+            return self.featurizer(pixel_values)
+        else:
+            return compute_sequence_patches({"img": pixel_values}, {"img": self.featurizer}, self.image_sequence_len)[
+                "img"
+            ]
 
     @property
     def default_image_resolution(self) -> Tuple[int, int, int]:
@@ -200,7 +260,7 @@ class TimmViTBackbone(VisionBackbone, ABC):
 
     @property
     def num_patches(self) -> int:
-        return self.featurizer.patch_embed.num_patches
+        return self.featurizer.patch_embed.num_patches * self.image_sequence_len
 
     @property
     def half_precision_dtype(self) -> torch.dtype:

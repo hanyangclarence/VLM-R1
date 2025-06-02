@@ -12,7 +12,6 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Callable, Optional
 
-import numpy as np
 import torch
 import torch.distributed as dist
 from torch.utils.data import DataLoader, Dataset, DistributedSampler, IterableDataset
@@ -22,21 +21,10 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 from prismatic.models.vlms import PrismaticVLM
 from prismatic.overwatch import initialize_overwatch
 from prismatic.training.metrics import Metrics, VLAMetrics
-from prismatic.training.train_utils import (
-    compute_actions_l1_loss,
-    compute_token_accuracy,
-    get_current_action_mask,
-    get_next_actions_mask,
-)
 from prismatic.util import check_bloat16_supported
 from prismatic.util.batching_utils import SplitModalitySampler
 from prismatic.util.data_utils import PaddedCollatorForActionPrediction, PaddedCollatorForLanguageModeling
 from prismatic.vla.action_tokenizer import ActionTokenizer
-
-# HuggingFace Default / LLaMa-2 IGNORE_INDEX (for labels)
-from prismatic.vla.constants import ACTION_DIM, ACTION_TOKEN_BEGIN_IDX, NUM_ACTIONS_CHUNK, IGNORE_INDEX
-NEWLINE_INDEX = 13  # '\n'
-STOP_INDEX = 2  # '</s>'
 
 # Initialize Overwatch =>> Wraps `logging.Logger`
 overwatch = initialize_overwatch(__name__)
@@ -63,6 +51,7 @@ class TrainingStrategy(ABC):
         reduce_in_full_precision: bool = False,
         mixed_precision_dtype: torch.dtype = torch.bfloat16,
         worker_init_fn: Optional[Callable[[int], None]] = None,
+        save_every_n_steps: Optional[int] = None,
         **_: str,
     ) -> None:
         self.vlm, self.device_id, self.stage = vlm, device_id, stage
@@ -89,6 +78,11 @@ class TrainingStrategy(ABC):
 
         # Optimizers & Scheduler (initialized in `run_setup`)
         self.optimizer, self.lr_scheduler = None, None
+
+        # how often to save checkpoints
+        self.save_every_n_steps = save_every_n_steps
+        if save_every_n_steps is not None:
+            assert save_every_n_steps > 0
 
         # Lightweight Validation
         assert (
@@ -242,6 +236,13 @@ class TrainingStrategy(ABC):
                             dist.barrier()
 
                             return
+                        elif (
+                            self.save_every_n_steps is not None
+                            and (metrics.global_step + 1) % self.save_every_n_steps == 0
+                        ):
+
+                            self.save_checkpoint(metrics.run_dir, metrics.global_step, epoch, loss.item())
+                            dist.barrier()
 
                         # Update Progress Bar
                         progress.update()
@@ -280,7 +281,7 @@ class TrainingStrategy(ABC):
         # === Train ===
         status = metrics.get_status()
         with tqdm(
-            total=(self.epochs * len(dataloader)) if self.max_steps is None else self.max_steps,
+            total=(self.epochs * len(dataloader)) if self.max_steps is None else self.max_steps, #len(dataloader) is error
             desc=status,
             leave=False,
             disable=not overwatch.is_rank_zero(),
@@ -311,49 +312,37 @@ class TrainingStrategy(ABC):
                 # Commit Loss =>> Backward!
                 metrics.commit(loss=loss)
                 loss.backward()
+                
+                # === Compute Action Token Accuracy & L1 Loss ===
 
-                # Get predicted and ground-truth token IDs
-                predicted_token_ids = output.logits[:, self.vlm.vision_backbone.num_patches : -1].argmax(dim=2)
-                ground_truth_token_ids = batch["labels"][:, 1:].to(predicted_token_ids.device)
-
-                #######################################################################
-                # === Compute Current Action Token Accuracy & L1 Loss ===
-                #######################################################################
-
-                # Get current action mask: Target the first ACTION_DIM non-ignore tokens
-                current_action_mask = get_current_action_mask(ground_truth_token_ids)
-
-                # Compute Accuracy
-                action_accuracy = compute_token_accuracy(predicted_token_ids, ground_truth_token_ids, mask=current_action_mask)
-
-                # Compute L1 Loss on Predicted (Continuous) Actions
-                action_l1_loss = compute_actions_l1_loss(action_tokenizer, predicted_token_ids, ground_truth_token_ids, mask=current_action_mask)
-
-                #######################################################################
-                # === Compute Next Actions Token Accuracy & L1 Loss ===
-                #######################################################################
-
-                # Get next actions mask: Target all tokens after the first ACTION_DIM non-ignore tokens (excluding the last token, which is the stop token)
-                next_actions_mask = get_next_actions_mask(ground_truth_token_ids)
+                # To compute action token accuracy, we need to identify the locations of the action tokens
+                # in both `output.logits` and `batch["labels"]`. We know that when "right" padding, we
+                # insert `self.vlm.vision_backbone.num_patches` at index 1.
+                #
+                # Computing `action_prediction_accuracy` is then pretty straightforward:
+                #   1) Extract "aligned" predictions & labels
+                #   2) Compute boolean "mask" where "labels > 2" (where 2 is ID for `EOS_TOKEN`)
+                #           => If masking out EOS, then it's just "labels != -100 (IGNORE_INDEX)
+                #   3) Compute masked accuracy as `(preds == logits) & mask` --> sum/divide by # unmasked!
+                action_preds = output.logits[:, self.vlm.vision_backbone.num_patches : -1].argmax(dim=2)
+                action_gt = batch["labels"][:, 1:].to(action_preds.device)
+                mask = (action_tokenizer.action_token_end_idx > action_gt) & (action_gt > action_tokenizer.action_token_begin_idx)
 
                 # Compute Accuracy
-                next_actions_accuracy = compute_token_accuracy(predicted_token_ids, ground_truth_token_ids, mask=next_actions_mask)
+                correct_preds = (action_preds == action_gt) & mask
+                action_accuracy = correct_preds.sum().float() / mask.sum().float()
 
                 # Compute L1 Loss on Predicted (Continuous) Actions
-                next_actions_l1_loss = compute_actions_l1_loss(action_tokenizer, predicted_token_ids, ground_truth_token_ids, mask=next_actions_mask)
-
-                #######################################################################
-                # === Log ===
-                #######################################################################
+                continuous_actions_pred = torch.tensor(
+                    action_tokenizer.decode_token_ids_to_actions(action_preds[mask].cpu().numpy())
+                )
+                continuous_actions_gt = torch.tensor(
+                    action_tokenizer.decode_token_ids_to_actions(action_gt[mask].cpu().numpy())
+                )
+                action_l1_loss = torch.nn.functional.l1_loss(continuous_actions_pred, continuous_actions_gt)
 
                 # Commit Metrics
-                metrics.commit(
-                    action_accuracy=action_accuracy,
-                    l1_loss=action_l1_loss,
-                    next_actions_accuracy=next_actions_accuracy,
-                    next_actions_l1_loss=next_actions_l1_loss,
-                    update_step_time=True,
-                )
+                metrics.commit(action_accuracy=action_accuracy, l1_loss=action_l1_loss, update_step_time=True)
 
                 # Compute metrics per dataset --> only on rank_zero since we don't log them on other workers anyways
                 if overwatch.is_rank_zero():
@@ -362,25 +351,21 @@ class TrainingStrategy(ABC):
                         for ds in datasets:
                             ds_mask = torch.tensor([elem == ds for elem in batch["dataset_names"]])
                             action_accuracy_ds = correct_preds[ds_mask].sum().float() / mask[ds_mask].sum().float()
-                            pred_continuous_actions_ds = torch.tensor(
+                            continuous_actions_pred_ds = torch.tensor(
                                 action_tokenizer.decode_token_ids_to_actions(
-                                    predicted_token_ids[ds_mask][mask[ds_mask]].cpu().numpy()
+                                    action_preds[ds_mask][mask[ds_mask]].cpu().numpy()
                                 )
                             )
                             continuous_actions_gt_ds = torch.tensor(
                                 action_tokenizer.decode_token_ids_to_actions(
-                                    ground_truth_token_ids[ds_mask][mask[ds_mask]].cpu().numpy()
+                                    action_gt[ds_mask][mask[ds_mask]].cpu().numpy()
                                 )
                             )
                             action_l1_loss_ds = torch.nn.functional.l1_loss(
-                                pred_continuous_actions_ds, continuous_actions_gt_ds
+                                continuous_actions_pred_ds, continuous_actions_gt_ds
                             )
                             metrics.commit_for_dataset(
-                                dataset_name=ds.decode(),
-                                action_accuracy=action_accuracy_ds,
-                                l1_loss=action_l1_loss_ds,
-                                next_actions_accuracy=next_actions_accuracy,
-                                next_actions_l1_loss=next_actions_l1_loss,
+                                dataset_name=ds.decode(), action_accuracy=action_accuracy_ds, l1_loss=action_l1_loss_ds
                             )
 
                 # === Gradient Step ===

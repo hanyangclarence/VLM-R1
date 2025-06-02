@@ -17,11 +17,18 @@ CLIP_VISION_BACKBONES = {
 #                         a decent approximation, the resulting features are *worse*; this was a super tricky bug
 #                         to identify, but luckily there's an easy fix (`override_act_layer`)
 class CLIPViTBackbone(TimmViTBackbone):
-    def __init__(self, vision_backbone_id: str, image_resize_strategy: str, default_image_size: int = 224) -> None:
+    def __init__(
+        self,
+        vision_backbone_id: str,
+        image_resize_strategy: str,
+        default_image_size: int = 224,
+        image_sequence_len: int = 1,
+    ) -> None:
         super().__init__(
             vision_backbone_id,
             CLIP_VISION_BACKBONES[vision_backbone_id],
             image_resize_strategy,
             default_image_size=default_image_size,
+            image_sequence_len=image_sequence_len,
             override_act_layer="quick_gelu" if CLIP_VISION_BACKBONES[vision_backbone_id].endswith(".openai") else None,
         )

@@ -16,10 +16,10 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 
 from prismatic.overwatch import initialize_overwatch
-from prismatic.vla.constants import ACTION_DIM, ACTION_PROPRIO_NORMALIZATION_TYPE, ACTION_TOKEN_BEGIN_IDX, IGNORE_INDEX, NUM_ACTIONS_CHUNK, PROPRIO_DIM, STOP_INDEX
 from prismatic.vla.datasets.rlds import obs_transforms, traj_transforms
 from prismatic.vla.datasets.rlds.utils import goal_relabeling, task_augmentation
 from prismatic.vla.datasets.rlds.utils.data_utils import (
+    NormalizationType,
     allocate_threads,
     get_dataset_statistics,
     normalize_action_and_proprio,
@@ -47,7 +47,8 @@ def make_dataset_from_rlds(
     depth_obs_keys: Dict[str, Optional[str]] = {},
     state_obs_keys: List[Optional[str]] = (),
     language_key: Optional[str] = None,
-    action_proprio_normalization_type: ACTION_PROPRIO_NORMALIZATION_TYPE,
+    language_reason_key: Optional[str] = None,
+    action_proprio_normalization_type: NormalizationType = NormalizationType.NORMAL,
     dataset_statistics: Optional[Union[dict, str]] = None,
     absolute_action_mask: Optional[List[bool]] = None,
     action_normalization_mask: Optional[List[bool]] = None,
@@ -128,8 +129,8 @@ def make_dataset_from_rlds(
     if language_key is not None:
         REQUIRED_KEYS.add(language_key)
     
-    # add key for language reasoning
-    REQUIRED_KEYS.add("language_reason")
+    if language_reason_key is not None:
+        REQUIRED_KEYS.add(language_reason_key)
 
     def restructure(traj):
         # apply a standardization function, if provided
@@ -171,7 +172,7 @@ def make_dataset_from_rlds(
             )
 
         # add timestep info
-        new_obs["timestep"] = tf.range(traj_len)
+        new_obs["timestep"] = tf.range(traj_len)  # TODO: This is not correct, since the rlbencho1 data is not sequential
 
         # extracts `language_key` into the "task" dict
         task = {}
@@ -182,12 +183,12 @@ def make_dataset_from_rlds(
                 )
             task["language_instruction"] = traj.pop(language_key)
         
-        language_reason_key = "language_reason"
-        if traj[language_reason_key].dtype != tf.string:
-            raise ValueError(
-                f"Language key {language_reason_key} has dtype {traj[language_reason_key].dtype}, " "but it must be tf.string."
-            )
-        task["language_reason"] = traj.pop(language_reason_key)
+        if language_reason_key is not None:
+            if traj[language_reason_key].dtype != tf.string:
+                raise ValueError(
+                    f"Language key {language_reason_key} has dtype {traj[language_reason_key].dtype}, " "but it must be tf.string."
+                )
+            task["language_reason"] = traj.pop(language_reason_key)
 
         traj = {
             "observation": new_obs,
@@ -209,6 +210,7 @@ def make_dataset_from_rlds(
 
         return traj
 
+    #builder = tfds.builder(name, data_dir=data_dir)
     builder = tfds.builder_from_directory(data_dir)    
 
     # load or compute dataset statistics
@@ -241,7 +243,10 @@ def make_dataset_from_rlds(
         dataset_statistics["action"]["mask"] = np.array(action_normalization_mask)
 
     # construct the dataset
-    split = "train" if train else "val"
+    if "val" not in builder.info.splits:
+        split = "train[:95%]" if train else "train[95%:]"
+    else:
+        split = "train" if train else "val"
 
     dataset = dl.DLataset.from_rlds(builder, split=split, shuffle=shuffle, num_parallel_reads=num_parallel_reads)
 

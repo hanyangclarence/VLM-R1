@@ -18,7 +18,7 @@ from prismatic.models.registry import GLOBAL_REGISTRY, MODEL_REGISTRY
 from prismatic.models.vlas import OpenVLA
 from prismatic.models.vlms import PrismaticVLM
 from prismatic.overwatch import initialize_overwatch
-from prismatic.vla.action_tokenizer import ActionTokenizer
+from prismatic.vla.action_tokenizer import ACTION_TOKENIZERS, ActionTokenizer
 
 # Initialize Overwatch =>> Wraps `logging.Logger`
 overwatch = initialize_overwatch(__name__)
@@ -54,6 +54,7 @@ def load(
     hf_token: Optional[str] = None,
     cache_dir: Optional[Union[str, Path]] = None,
     load_for_training: bool = False,
+    image_sequence_len: Optional[int] = None,
 ) -> PrismaticVLM:
     """Loads a pretrained PrismaticVLM from either local disk or the HuggingFace Hub."""
     if os.path.isdir(model_id_or_path):
@@ -88,11 +89,18 @@ def load(
         f"             Checkpoint Path =>> [underline]`{checkpoint_pt}`[/]"
     )
 
+    if image_sequence_len is None:
+        if hasattr(model_cfg, "image_sequence_len"):
+            image_sequence_len = model_cfg.image_sequence_len
+        else:
+            image_sequence_len = 1
+
     # Load Vision Backbone
     overwatch.info(f"Loading Vision Backbone [bold]{model_cfg['vision_backbone_id']}[/]")
     vision_backbone, image_transform = get_vision_backbone_and_transform(
         model_cfg["vision_backbone_id"],
         model_cfg["image_resize_strategy"],
+        image_sequence_len,
     )
 
     # Load LLM Backbone --> note `inference_mode = True` by default when calling `load()`
@@ -126,6 +134,7 @@ def load_vla(
     load_for_training: bool = False,
     step_to_load: Optional[int] = None,
     model_type: str = "pretrained",
+    image_sequence_len: Optional[int] = None,
 ) -> OpenVLA:
     """Loads a pretrained OpenVLA from either local disk or the HuggingFace Hub."""
 
@@ -175,7 +184,17 @@ def load_vla(
     # Load VLA Config (and corresponding base VLM `ModelConfig`) from `config.json`
     with open(config_json, "r") as f:
         vla_cfg = json.load(f)["vla"]
-        model_cfg = ModelConfig.get_choice_class(vla_cfg["base_vlm"])()
+        base_vlm = vla_cfg["base_vlm"]
+
+    # if base vlm is a folder, load its config.json (only works for native format!)
+    # this might happen if you start a run who's base vlm is from a folder instead of from hf
+    if os.path.isdir(base_vlm):
+        with open(Path(base_vlm) / "config.json", "r") as f:
+            base_cfg = json.load(f)["model"]
+            base_vlm = base_cfg["model_id"]
+
+    overwatch.info(f"Base vlm: {base_vlm}")
+    model_cfg = ModelConfig.get_choice_class(base_vlm)()
 
     # Load Dataset Statistics for Action Denormalization
     with open(dataset_statistics_json, "r") as f:
@@ -191,11 +210,18 @@ def load_vla(
         f"             Checkpoint Path =>> [underline]`{checkpoint_pt}`[/]"
     )
 
+    if image_sequence_len is None:
+        if hasattr(model_cfg, "image_sequence_len"):
+            image_sequence_len = model_cfg.image_sequence_len
+        else:
+            image_sequence_len = 1
+
     # Load Vision Backbone
     overwatch.info(f"Loading Vision Backbone [bold]{model_cfg.vision_backbone_id}[/]")
     vision_backbone, image_transform = get_vision_backbone_and_transform(
         model_cfg.vision_backbone_id,
         model_cfg.image_resize_strategy,
+        image_sequence_len,
     )
 
     # Load LLM Backbone --> note `inference_mode = True` by default when calling `load()`
@@ -208,7 +234,8 @@ def load_vla(
     )
 
     # Create Action Tokenizer
-    action_tokenizer = ActionTokenizer(llm_backbone.get_tokenizer())
+    ac_tokenizer = vla_cfg["action_tokenizer"] if "action_tokenizer" in vla_cfg else "action_tokenizer"
+    action_tokenizer: ActionTokenizer = ACTION_TOKENIZERS[ac_tokenizer](llm_backbone.get_tokenizer())
 
     # Load VLM using `from_pretrained` (clobbers HF syntax... eventually should reconcile)
     overwatch.info(f"Loading VLA [bold blue]{model_cfg.model_id}[/] from Checkpoint")

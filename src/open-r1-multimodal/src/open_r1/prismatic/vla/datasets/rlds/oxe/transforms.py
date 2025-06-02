@@ -20,6 +20,7 @@ from typing import Any, Dict
 import tensorflow as tf
 import tensorflow_graphics.geometry.transformation as tfgt
 
+
 from prismatic.vla.datasets.rlds.oxe.utils.droid_utils import droid_baseact_transform, droid_finetuning_transform
 from prismatic.vla.datasets.rlds.utils.data_utils import (
     binarize_gripper_actions,
@@ -841,18 +842,11 @@ def libero_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     trajectory["observation"]["gripper_state"] = trajectory["observation"]["state"][:, -2:]  # 2D gripper state
     return trajectory
 
-
-def aloha_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
-    # Don't need to do anything because dataset is already in the correct format
-    return trajectory
-
-
 def rlbencho1_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     eef_position_proprio, eef_orientation_proprio, gripper_proprio = tf.split(trajectory["observation"]["state"], [3,4,1], axis=1)  # (T,3) (T,4) (T,1)
     eef_position_control, eef_orientation_control, gripper_control = tf.split(trajectory["action"], [3,4,1], axis=1) # (T,3) (T,4) (T,1)
 
-    gripper_proprio = invert_gripper_actions(gripper_proprio)  # +1 = open, 0 = close
-    action_gripper = invert_gripper_actions(gripper_control)
+    action_gripper = invert_gripper_actions(gripper_control) # +1 = open, 0 = close
 
     action_delta_xyz = eef_position_control - eef_position_proprio # (T, 3)
     
@@ -867,7 +861,6 @@ def rlbencho1_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     action_delta_rpy = tf.where(tf.math.is_nan(action_delta_rpy), tf.zeros_like(action_delta_rpy), action_delta_rpy)
 
     trajectory["action"] = tf.concat([action_delta_xyz, action_delta_rpy, action_gripper], axis=-1) # (T, [3,3,1]) caution: last action is meaningless!
-    trajectory["observation"]["state"] = tf.concat([eef_position_proprio, eef_orientation_proprio, gripper_proprio], axis=-1)  # (T, [3,4,1])
             
     return trajectory
 
@@ -950,12 +943,7 @@ OXE_STANDARDIZATION_TRANSFORMS = {
     "libero_object_no_noops": libero_dataset_transform,
     "libero_goal_no_noops": libero_dataset_transform,
     "libero_10_no_noops": libero_dataset_transform,
-    "libero_4_task_suites_no_noops": libero_dataset_transform,
-    ### ALOHA fine-tuning datasets
-    "aloha1_fold_shorts_20_demos": aloha_dataset_transform,
-    "aloha1_fold_shirt_30_demos": aloha_dataset_transform,
-    "aloha1_scoop_X_into_bowl_45_demos": aloha_dataset_transform,
-    "aloha1_put_X_into_pot_300_demos": aloha_dataset_transform,
-    ### RLBench datasets
+    "libero_90": libero_dataset_transform,
+    ### ROBOVERSE datasets
     "rlbencho1": rlbencho1_dataset_transform,
 }

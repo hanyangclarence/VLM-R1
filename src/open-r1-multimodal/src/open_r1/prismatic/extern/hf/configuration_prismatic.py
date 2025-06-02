@@ -54,6 +54,10 @@ LLM_BACKBONE_TO_HF_PATH = {
     "mistral-v0.1-7b-instruct": "mistralai/Mistral-7B-Instruct-v0.1",
 
     "phi-2-3b": "microsoft/phi-2",
+    
+    "qwen25-0_5b-extra":"Qwen/Qwen2.5-0.5B"
+    
+    # TODO: Add support for Qwen25
 }
 LLM_BACKBONE_TO_HF_METACLASS = {
     "llama2-7b-pure": "llama", "llama2-13b-pure": "llama", "llama2-7b-chat": "llama", "llama2-13b-chat": "llama",
@@ -62,6 +66,10 @@ LLM_BACKBONE_TO_HF_METACLASS = {
     "mistral-v0.1-7b-pure": "mistral", "mistral-v0.1-7b-instruct": "mistral",
 
     "phi-2-3b": "phi",
+    
+    "qwen25-0_5b-extra":"qwen2"
+
+    # TODO: Add support for Qwen25
 }
 
 VALID_VISION_BACKBONES = set(VISION_BACKBONE_TO_RESOLUTION.keys())

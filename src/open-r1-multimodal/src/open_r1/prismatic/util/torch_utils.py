@@ -93,3 +93,27 @@ def check_bloat16_supported() -> bool:
 
     except Exception:
         return False
+
+
+# === Other helpers ===
+
+
+def sequence_combine_call_split(sequence: torch.Tensor, fn: Callable):
+    # image sequence must be (B, T, ...)
+    B, T = sequence.shape[:2]
+    flat_sequence = sequence.reshape([-1, *sequence.shape[2:]])
+    # outputs will be (B*T, ...)
+    flat_outputs = fn(flat_sequence)
+    return flat_outputs.reshape([B, T, *flat_outputs.shape[1:]])
+
+
+def merge_two_dims(tensor: torch.Tensor, start_dim: int = 0):
+    # wrap around
+    if start_dim < 0:
+        start_dim = len(tensor.shape) + start_dim
+        assert start_dim >= 0
+    # check the next dimension is also within bounds
+    assert len(tensor.shape) > start_dim + 1, "Start dimension for merge is too big!"
+
+    # merge the dimension
+    return tensor.reshape([*tensor.shape[:start_dim], -1, *tensor.shape[start_dim + 2 :]])

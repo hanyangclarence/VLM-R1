@@ -59,6 +59,7 @@ class FSDPStrategy(TrainingStrategy):
         worker_init_fn: Optional[Callable[[int], None]] = None,
         sharding_strategy: str = "shard-grad-op",
         state_dict_type: StateDictType = StateDictType.FULL_STATE_DICT,
+        save_every_n_steps: Optional[int] = None,
     ) -> None:
         super().__init__(
             vlm=vlm,
@@ -78,6 +79,7 @@ class FSDPStrategy(TrainingStrategy):
             reduce_in_full_precision=reduce_in_full_precision,
             mixed_precision_dtype=mixed_precision_dtype,
             worker_init_fn=worker_init_fn,
+            save_every_n_steps=save_every_n_steps,
         )
 
         # FSDP-Specific Parameters
@@ -85,6 +87,8 @@ class FSDPStrategy(TrainingStrategy):
             self.fsdp_sharding_strategy = ShardingStrategy._HYBRID_SHARD_ZERO2
         elif sharding_strategy == "full-shard":
             self.fsdp_sharding_strategy = ShardingStrategy.HYBRID_SHARD
+            #self.fsdp_sharding_strategy = ShardingStrategy.FULL_SHARD
+
         else:
             raise ValueError(f"FSDP Sharding Strategy {sharding_strategy} is not supported!")
 
@@ -190,6 +194,7 @@ class FSDPStrategy(TrainingStrategy):
         n_train_examples = math.ceil(n_train_examples / self.global_batch_size) * self.global_batch_size
         if self.max_steps is None:
             num_training_steps = (n_train_examples * self.epochs) // self.global_batch_size
+            self.max_steps= num_training_steps
         else:
             num_training_steps = self.max_steps
 

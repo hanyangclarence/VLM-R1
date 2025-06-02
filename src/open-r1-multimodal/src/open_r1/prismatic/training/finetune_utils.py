@@ -14,13 +14,9 @@ from accelerate import PartialState
 from huggingface_hub import HfApi, snapshot_download
 from peft import LoraConfig, PeftModel, get_peft_model
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.optim import AdamW
-from torch.optim.lr_scheduler import MultiStepLR
-from torch.utils.data import DataLoader
-from transformers import AutoConfig, AutoImageProcessor, AutoModelForVision2Seq, AutoProcessor
-from transformers.modeling_outputs import CausalLMOutputWithPast
 
 from prismatic.vla.datasets.rlds.utils.data_utils import save_dataset_statistics
+from prismatic.extern.hf.modeling_prismatic import OpenVLAForActionPrediction
 
 
 def remove_ddp_in_checkpoint(state_dict) -> dict:
@@ -46,40 +42,6 @@ def remove_ddp_in_checkpoint(state_dict) -> dict:
         else:
             new_state_dict[k] = v
     return new_state_dict
-
-
-def get_run_id(cfg) -> str:
-    """
-    Generates or retrieves an identifier string for an experiment run.
-
-    Args:
-        cfg (FinetuneConfig): Training configuration.
-
-    Returns:
-        str: Experiment run ID.
-    """
-    if cfg.run_id_override is not None:
-        # Override the run ID with the user-provided ID
-        run_id = cfg.run_id_override
-    elif cfg.resume:
-        # Override run ID with the previous resumed run's ID
-        run_id = cfg.vla_path.split("/")[-1]
-        # Remove the "--XXX_chkpt" suffix from the run ID if it exists
-        if "chkpt" in run_id.split("--")[-1]:
-            run_id = "--".join(run_id.split("--")[:-1])
-    else:
-        run_id = (
-            f"{cfg.vla_path.split('/')[-1]}+{cfg.dataset_name}"
-            f"+b{cfg.batch_size * cfg.grad_accumulation_steps}"
-            f"+lr-{cfg.learning_rate}"
-        )
-        if cfg.use_lora:
-            run_id += f"+lora-r{cfg.lora_rank}+dropout-{cfg.lora_dropout}"
-        if cfg.image_aug:
-            run_id += "--image_aug"
-        if cfg.run_id_note is not None:
-            run_id += f"--{cfg.run_id_note}"
-    return run_id
 
 
 def load_checkpoint(module_name: str, path: str, step: int, device: str = "cpu") -> dict:
@@ -169,45 +131,21 @@ def init_module(
     return wrap_ddp(module, device_id, find_unused_params)
 
 
-def compute_smoothened_metrics(metrics_deques) -> dict:
-    """
-    Compute smoothened metrics from recent deques.
-
-    Args:
-        metrics_deques (dict): Dictionary of deques containing recent metrics.
-
-    Returns:
-        dict: Dictionary of smoothened metrics.
-    """
-    smoothened_metrics = {}
-    for name, deque in metrics_deques.items():
-        if deque and len(deque) > 0:
-            smoothened_metrics[name] = sum(deque) / len(deque)
-    return smoothened_metrics
+def compute_token_accuracy(predicted_token_ids, ground_truth_token_ids, mask):
+    correct_preds = (predicted_token_ids == ground_truth_token_ids) & mask
+    accuracy = correct_preds.sum().float() / mask.sum().float()
+    return accuracy
 
 
-def log_metrics_to_wandb(metrics, prefix, step, wandb_entity) -> None:
-    """
-    Log metrics to Weights & Biases.
-
-    Args:
-        metrics (dict): Dictionary of metrics to log
-        prefix (str): Prefix for metric names
-        step (int): Training step
-        wandb_entity (str): W&B entity instance
-
-    Returns:
-        None.
-    """
-    log_dict = {}
-    for name, value in metrics.items():
-        # Map loss_value to Loss for better readability in W&B
-        if name == "loss_value":
-            log_dict[f"{prefix}/Loss"] = value
-        # Keep other metrics as is
-        else:
-            log_dict[f"{prefix}/{name.replace('_', ' ').title()}"] = value
-    wandb_entity.log(log_dict, step=step)
+def compute_actions_l1_loss(action_tokenizer, predicted_token_ids, ground_truth_token_ids, mask):
+    pred_continuous_actions = torch.tensor(
+        action_tokenizer.decode_token_ids_to_actions(predicted_token_ids[mask].cpu().numpy())
+    )
+    true_continuous_actions = torch.tensor(
+        action_tokenizer.decode_token_ids_to_actions(ground_truth_token_ids[mask].cpu().numpy())
+    )
+    l1_loss = torch.nn.functional.l1_loss(pred_continuous_actions, true_continuous_actions)
+    return l1_loss
 
 
 def save_training_checkpoint(
@@ -217,8 +155,6 @@ def save_training_checkpoint(
     vla,
     processor,
     proprio_projector,
-    noisy_action_projector,
-    action_head,
     train_dataset,
     distributed_state,
 ) -> None:
@@ -270,19 +206,19 @@ def save_training_checkpoint(
         if cfg.use_proprio and proprio_projector is not None:
             torch.save(proprio_projector.state_dict(), checkpoint_dir / f"proprio_projector--{checkpoint_name_suffix}")
 
-        if cfg.use_diffusion and noisy_action_projector is not None:
-            torch.save(
-                noisy_action_projector.state_dict(), checkpoint_dir / f"noisy_action_projector--{checkpoint_name_suffix}"
-            )
+        # if cfg.use_diffusion and noisy_action_projector is not None:
+        #     torch.save(
+        #         noisy_action_projector.state_dict(), checkpoint_dir / f"noisy_action_projector--{checkpoint_name_suffix}"
+        #     )
 
-        if (cfg.use_l1_regression or cfg.use_diffusion) and action_head is not None:
-            torch.save(action_head.state_dict(), checkpoint_dir / f"action_head--{checkpoint_name_suffix}")
+        # if (cfg.use_l1_regression or cfg.use_diffusion) and action_head is not None:
+        #     torch.save(action_head.state_dict(), checkpoint_dir / f"action_head--{checkpoint_name_suffix}")
 
-        if cfg.use_film:
-            # To be safe, just save the entire vision backbone (not just FiLM components)
-            torch.save(
-                vla.module.vision_backbone.state_dict(), checkpoint_dir / f"vision_backbone--{checkpoint_name_suffix}"
-            )
+        # if cfg.use_film:
+        #     # To be safe, just save the entire vision backbone (not just FiLM components)
+        #     torch.save(
+        #         vla.module.vision_backbone.state_dict(), checkpoint_dir / f"vision_backbone--{checkpoint_name_suffix}"
+        #     )
 
     # Wait for model components to be saved
     dist.barrier()
@@ -290,7 +226,7 @@ def save_training_checkpoint(
     # Merge LoRA weights into base model and save resulting model checkpoint
     # Note: Can be very slow on some devices; if so, we recommend merging offline
     if cfg.use_lora and cfg.merge_lora_during_training:
-        base_vla = AutoModelForVision2Seq.from_pretrained(
+        base_vla = OpenVLAForActionPrediction.from_pretrained(
             cfg.vla_path, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True, trust_remote_code=True
         )
         merged_vla = PeftModel.from_pretrained(base_vla, adapter_dir)

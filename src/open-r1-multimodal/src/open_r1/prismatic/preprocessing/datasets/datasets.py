@@ -18,6 +18,7 @@ import torch
 from PIL import Image
 from torch.utils.data import Dataset
 from transformers import CodeGenTokenizerFast, LlamaTokenizerFast, PreTrainedTokenizerBase
+from transformers.models.qwen2.tokenization_qwen2_fast import Qwen2TokenizerFast
 
 from prismatic.models.backbones.llm.prompting import PromptBuilder
 from prismatic.models.backbones.vision import ImageTransform
@@ -149,6 +150,10 @@ class FinetuneDataset(Dataset[Dict[str, torch.Tensor]]):
             elif isinstance(self.tokenizer, CodeGenTokenizerFast):
                 pass
 
+            # Qwen2 Tokenizer -- agent turn requires EOS if its the last turn!
+            elif isinstance(self.tokenizer, Qwen2TokenizerFast):
+                if turn["from"] == "gpt" and turn_idx == len(conversation) - 1:
+                    msg += prompt_builder.eos
             else:
                 raise ValueError(f"Tokenizer of type `{type(self.tokenizer)}` is not explicitly handled!")
 

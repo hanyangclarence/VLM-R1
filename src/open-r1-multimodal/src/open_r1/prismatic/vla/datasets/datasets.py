@@ -9,19 +9,26 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Tuple, Type
 
+import tensorflow as tf
+
 import numpy as np
 import torch
 from PIL import Image
 from torch.utils.data import Dataset, IterableDataset
 from transformers import PreTrainedTokenizerBase
+from transformers.models.qwen2.tokenization_qwen2_fast import Qwen2TokenizerFast
 
 from prismatic.models.backbones.llm.prompting import PromptBuilder
 from prismatic.models.backbones.vision import ImageTransform
 from prismatic.util.data_utils import tree_map
 from prismatic.vla.action_tokenizer import ActionTokenizer
-from prismatic.vla.constants import ACTION_DIM, ACTION_PROPRIO_NORMALIZATION_TYPE, ACTION_TOKEN_BEGIN_IDX, IGNORE_INDEX, NUM_ACTIONS_CHUNK, PROPRIO_DIM, STOP_INDEX
 from prismatic.vla.datasets.rlds import make_interleaved_dataset, make_single_dataset
 from prismatic.vla.datasets.rlds.oxe import OXE_NAMED_MIXTURES, get_oxe_dataset_kwargs_and_weights
+from prismatic.vla.datasets.rlds.utils.data_utils import NormalizationType
+
+# HuggingFace Default / LLaMa-2 IGNORE_INDEX (for labels)
+IGNORE_INDEX = -100
+
 
 @dataclass
 class RLDSBatchTransform:
@@ -30,71 +37,89 @@ class RLDSBatchTransform:
     image_transform: ImageTransform
     prompt_builder_fn: Type[PromptBuilder]
     predict_stop_token: bool = True
+    image_window_size: int = 1
     use_wrist_image: bool = False
     use_proprio: bool = False
 
     def __call__(self, rlds_batch: Dict[str, Any]) -> Dict[str, Any]:
         """Converts a RLDS batch to the format expected by the OpenVLA collator/models."""
-        dataset_name, current_action = rlds_batch["dataset_name"], rlds_batch["action"][0]
-        img = Image.fromarray(rlds_batch["observation"]["image_primary"][0])
+        dataset_name, action = rlds_batch["dataset_name"], rlds_batch["action"]
         lang = rlds_batch["task"]["language_instruction"].decode().lower()
         reason_lang = rlds_batch["task"]["language_reason"].decode()
-        actions = rlds_batch["action"]
-
-        # Construct Chat-based Prompt =>> Input is default query + language instruction, output are the action tokens
-        prompt_builder = self.prompt_builder_fn("openvla")
-
-        # Get future action chunk
-        future_actions = rlds_batch["action"][1:]
-        future_actions_string = ''.join(self.action_tokenizer(future_actions))
-
-        # Get action chunk string
-        current_action_string = self.action_tokenizer(current_action)
-        action_chunk_string = current_action_string + future_actions_string
         
-        full_response = f"{reason_lang}\n\nACTION:\n{action_chunk_string}"
+        # either a single or multi image, depending on image_window_size
+        if self.image_window_size == 1:
+            img = Image.fromarray(rlds_batch["observation"]["image_primary"][0])
+            if self.use_wrist_image:
+                img = [img, Image.fromarray(rlds_batch["observation"]["image_wrist"][0])]
+        else:
+            img = [Image.fromarray(rlds_batch["observation"]["image_primary"][t]) for t in range(self.image_window_size)]
+            if self.use_wrist_image:
+                # wrist images are interleaved
+                wrist_img = [
+                    Image.fromarray(rlds_batch["observation"]["image_wrist"][t]) for t in range(self.image_window_size)
+                ]
+                img = [val for tup in zip(img, wrist_img) for val in tup]
 
-        conversation = [
-            {"from": "human", "value": f"What action should the robot take to {lang}?"},
-            {"from": "gpt", "value": full_response},
-        ]
+        conversation = []
+
+        # if there is no action horizon, remove it here.
+
+        if self.action_tokenizer.required_future_horizon == 0:
+            action = action[-1]
+        else:
+            # get the last FH + 1 actions (current action + future ones) if required
+            action = action[-self.action_tokenizer.required_future_horizon - 1 :]
+
+        tokenized_action = self.action_tokenizer(action)
+        full_target = f"{reason_lang}\n\nACTION:\n{tokenized_action}"
+        
+        conversation.extend(
+            [
+                {"from": "human", "value": f"What action should the robot take to {lang}?"},
+                {"from": "gpt", "value": full_target},
+            ]
+        )
+        
+        full_target_tokens = self.base_tokenizer(full_target, add_special_tokens=True)["input_ids"]
+        num_answer_tokens = len(full_target_tokens)
+        if full_target_tokens[0] == self.base_tokenizer.bos_token_id:
+            num_answer_tokens -= 1
+
+        # Construct Chat-based Prompt
+        prompt_builder = self.prompt_builder_fn("openvla")
         for turn in conversation:
             prompt_builder.add_turn(turn["from"], turn["value"])
 
         # Tokenize (w/ `base_tokenizer`)
         input_ids = self.base_tokenizer(prompt_builder.get_prompt(), add_special_tokens=True).input_ids
+        
         labels = list(input_ids)
 
         # Tensorize =>> Run Image Transform to get `pixel_values` =>> Return
-        #   =>> IMPORTANT :: IF WE'RE USING HF LLM.forward(..., labels=labels), SHIFTING HAPPENS _INSIDE_ MODEL!
         input_ids, labels = torch.tensor(input_ids), torch.tensor(labels)
-        pixel_values = (img)
+        if isinstance(img, list):
+            pixel_values = [self.image_transform(image) for image in img]
+            pixel_values = torch.cat(pixel_values, dim=0)
+        else:
+            pixel_values = self.image_transform(img)
 
-        # [CRITICAL] We do not want to take the loss for anything but the predicted action tokens!
-        full_response_tokens = self.base_tokenizer(full_response, add_special_tokens=True).input_ids
-        num_answer_tokens = len(full_response_tokens)
-        if full_response_tokens[0] == self.base_tokenizer.bos_token_id:
-            num_answer_tokens -= 1  # Remove BOS token if present
+        # critical, some tokenizers have different numbers of "end tokens".
+        num_end_tokens = 1
+        if isinstance(self.base_tokenizer, Qwen2TokenizerFast):
+            # Qwen has <|im_end|><|endoftext|> for example
+            num_end_tokens = 2
 
-        labels[: -(num_answer_tokens + 1)] = IGNORE_INDEX  # 1 is for the EOS token
+        labels[: -(num_answer_tokens + num_end_tokens)] = IGNORE_INDEX
         if not self.predict_stop_token:
-            labels[-1] = IGNORE_INDEX
+            labels[-num_end_tokens:] = IGNORE_INDEX
 
-        return_dict = dict(pixel_values=pixel_values, input_ids=input_ids, labels=labels, dataset_name=dataset_name, actions=actions)
-
-        # Add additional inputs
-        if self.use_wrist_image:
-            all_wrist_pixels = []
-            for k in rlds_batch["observation"].keys():
-                if "wrist" in k:
-                    img_wrist = Image.fromarray(rlds_batch["observation"][k][0])
-                    pixel_values_wrist = self.image_transform(img_wrist)
-                    all_wrist_pixels.append(pixel_values_wrist)
-            return_dict["pixel_values_wrist"] = torch.cat(all_wrist_pixels, dim=0)
-        if self.use_proprio and "proprio" in rlds_batch["observation"]:
+        return_dict = dict(pixel_values=pixel_values, input_ids=input_ids, labels=labels, dataset_name=dataset_name)
+        
+        if self.use_proprio:
             proprio = rlds_batch["observation"]["proprio"]
             return_dict["proprio"] = proprio
-
+        
         return return_dict
 
 
@@ -108,6 +133,9 @@ class RLDSDataset(IterableDataset):
         shuffle_buffer_size: int = 256_000,
         train: bool = True,
         image_aug: bool = False,
+        future_action_window_size: int = 0,
+        image_window_size: int = 1,
+        load_camera_views: tuple = ("primary",),
     ) -> None:
         """Lightweight wrapper around RLDS TFDS Pipeline for use with PyTorch/OpenVLA Data Loaders."""
         self.data_root_dir, self.data_mix, self.batch_transform = data_root_dir, data_mix, batch_transform
@@ -120,28 +148,21 @@ class RLDSDataset(IterableDataset):
             mixture_spec = [(self.data_mix, 1.0)]
 
         # fmt: off
-        if "aloha" in self.data_mix:
-            load_camera_views = ("primary", "left_wrist", "right_wrist")
-        elif "rlbencho1" in self.data_mix:
-            load_camera_views = ("primary", "wrist")
-        else:
-            assert False, f"Unknown dataset mix {self.data_mix} -- please specify a valid mix name!"
-
         per_dataset_kwargs, weights = get_oxe_dataset_kwargs_and_weights(
             self.data_root_dir,
             mixture_spec,
-            load_camera_views=load_camera_views,
+            load_camera_views=("primary", "wrist"),
             load_depth=False,
             load_proprio=True,
             load_language=True,
-            action_proprio_normalization_type=ACTION_PROPRIO_NORMALIZATION_TYPE,
+            action_proprio_normalization_type=NormalizationType.BOUNDS_Q99,
         )
         rlds_config = dict(
             traj_transform_kwargs=dict(
-                window_size=1,                                      # If we wanted to feed / predict more than one step
-                future_action_window_size=NUM_ACTIONS_CHUNK-1,      # For action chunking
-                skip_unlabeled=True,                                # Skip trajectories without language labels
-                goal_relabeling_strategy="uniform",                 # Goals are currently unused
+                window_size=image_window_size,                        # If we wanted to feed / predict more than one step
+                future_action_window_size=future_action_window_size,  # For action chunking
+                skip_unlabeled=True,                                  # Skip trajectories without language labels
+                goal_relabeling_strategy="uniform",                   # Goals are currently unused
             ),
             frame_transform_kwargs=dict(
                 resize_size=resize_resolution,
@@ -180,9 +201,28 @@ class RLDSDataset(IterableDataset):
     def make_dataset(self, rlds_config):
         return make_interleaved_dataset(**rlds_config)
 
+    # def __iter__(self) -> Dict[str, Any]:
+    #     for rlds_batch in self.dataset.as_numpy_iterator():
+    #         yield self.batch_transform(rlds_batch)
+    
     def __iter__(self) -> Dict[str, Any]:
-        for rlds_batch in self.dataset.as_numpy_iterator():
-            yield self.batch_transform(rlds_batch)
+        iterator = self.dataset.as_numpy_iterator()
+        while True:
+            try:
+                rlds_batch = next(iterator)
+                yield self.batch_transform(rlds_batch)
+            except tf.errors.InvalidArgumentError as e:
+                if "Invalid PNG data" in str(e):
+                    print(f"Skipping batch due to invalid PNG data: {str(e)}")
+                    continue
+                else:
+                    print(f"Skipping batch due to unexpected error: {str(e)}")
+                    continue
+            except StopIteration:
+                break
+            except Exception as e:
+                print(f"Skipping batch due to unexpected error: {str(e)}")
+                continue
 
     def __len__(self) -> int:
         return self.dataset_length

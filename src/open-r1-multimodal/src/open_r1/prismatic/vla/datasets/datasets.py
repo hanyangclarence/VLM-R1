@@ -84,6 +84,8 @@ class RLDSBatchTransform:
         labels = self.base_tokenizer(full_target, add_special_tokens=True)["input_ids"]
         if labels[0] == self.base_tokenizer.bos_token_id:
             labels = labels[1:]
+        if labels[-1] != self.base_tokenizer.eos_token_id:
+            labels.append(self.base_tokenizer.eos_token_id)
 
         # Construct Chat-based Prompt
         prompt_builder = self.prompt_builder_fn("openvla")
@@ -93,6 +95,8 @@ class RLDSBatchTransform:
         # Tokenize (w/ `base_tokenizer`)
         input_ids = self.base_tokenizer(prompt_builder.get_prompt(), add_special_tokens=True).input_ids
         if input_ids[-1] == self.base_tokenizer.eos_token_id:
+            input_ids = input_ids[:-1]
+        if input_ids[-1] == 259:  # empty space token added by the prompt builder
             input_ids = input_ids[:-1]
 
         # Tensorize =>> Run Image Transform to get `pixel_values` =>> Return

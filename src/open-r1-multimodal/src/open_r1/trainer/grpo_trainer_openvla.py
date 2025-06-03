@@ -160,6 +160,7 @@ class OpenVLAGRPOTrainer(Trainer):
             vla_args.vla_path,
             torch_dtype=torch.bfloat16 if torch_dtype == "bfloat16" else torch.float32,
             attn_implementation=attn_implementation,
+            low_cpu_mem_usage=True,
             trust_remote_code=True,
         )
         

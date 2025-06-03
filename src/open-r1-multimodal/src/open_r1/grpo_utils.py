@@ -841,7 +841,7 @@ def token_accuracy_reward(pred_ids, gt_ids, action_tokenizer, action_dim=7, acti
     
     rewards = []
     for batch_idx, (pred, gt) in enumerate(zip(pred_ids, gt_ids)):
-        pred_action_ids = pred[pred > action_tokenizer.action_token_begin_idx]
+        pred_action_ids = pred[(pred > action_tokenizer.action_token_begin_idx) & (pred != action_tokenizer.tokenizer.pad_token_id)]
         gt_action_ids = gt[gt > action_tokenizer.action_token_begin_idx]
         
         if pred_action_ids.shape != gt_action_ids.shape:

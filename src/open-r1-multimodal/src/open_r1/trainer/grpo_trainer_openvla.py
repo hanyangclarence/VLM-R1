@@ -148,7 +148,7 @@ class OpenVLAGRPOTrainer(Trainer):
             args = GRPOConfig(f"{vla_path}-GRPO")
         
         # Trim trailing forward slash ('/') in VLA path if it exists
-        print(f"Fine-tuning OpenVLA Model `{vla_args.vla_path}` on `{vla_args.dataset_name}`")
+        print(f"Fine-tuning OpenVLA Model `{vla_args.vla_path}` on `{vla_args.vla_dataset_name}`")
         
         # GPU setup
         distributed_state = PartialState()
@@ -282,7 +282,7 @@ class OpenVLAGRPOTrainer(Trainer):
         )
         train_dataset = RLDSDataset(
             vla_args.data_root_dir,
-            vla_args.dataset_name,
+            vla_args.vla_dataset_name,
             batch_transform,
             resize_resolution=tuple(vla.module.config.image_sizes),
             shuffle_buffer_size=vla_args.shuffle_buffer_size,
@@ -290,7 +290,7 @@ class OpenVLAGRPOTrainer(Trainer):
         )
         val_dataset = RLDSDataset(
             vla_args.data_root_dir,
-            vla_args.dataset_name,
+            vla_args.vla_dataset_name,
             batch_transform,
             resize_resolution=tuple(vla.module.config.image_sizes),
             shuffle_buffer_size=vla_args.shuffle_buffer_size // 10,

@@ -79,7 +79,7 @@ class OpenVLAConfig:
 
     # Directory Paths
     data_root_dir: Path = Path("datasets/open-x-embodiment")        # Path to Open-X dataset directory
-    dataset_name: str = "droid_wipe"                                # Name of fine-tuning dataset (e.g., `droid_wipe`)
+    vla_dataset_name: str = "droid_wipe"                                # Name of fine-tuning dataset (e.g., `droid_wipe`)
 
     # Architecture
     num_images_in_input: int = 1                                   # Number of images in the VLA input (default: 1)

@@ -264,7 +264,7 @@ def main(script_args, training_args, model_args):
         quantization_config=quantization_config,
     )
     # training_args.model_init_kwargs = model_kwargs
-    from transformers import Qwen2VLForConditionalGeneration, Qwen2_5_VLForConditionalGeneration
+    # from transformers import Qwen2VLForConditionalGeneration, Qwen2_5_VLForConditionalGeneration
     if "Qwen2-VL" in model_args.model_name_or_path:
         model = Qwen2VLForConditionalGeneration.from_pretrained(
             model_args.model_name_or_path, **model_kwargs

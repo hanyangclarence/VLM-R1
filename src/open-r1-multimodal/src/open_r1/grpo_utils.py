@@ -7,7 +7,7 @@ from typing import Optional
 from babel.numbers import parse_decimal
 from utils.math import compute_score
 from datasets import load_dataset, load_from_disk
-from transformers import Qwen2VLForConditionalGeneration
+# from transformers import Qwen2VLForConditionalGeneration
 
 from math_verify import parse, verify
 from open_r1.trainer import VLMGRPOTrainer, GRPOConfig

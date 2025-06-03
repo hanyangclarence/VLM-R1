@@ -1,4 +1,4 @@
-from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2VLForConditionalGeneration, AutoProcessor
+from transformers import AutoProcessor
 from typing import Dict, Any, Union
 from trl.data_utils import maybe_apply_chat_template
 import torch

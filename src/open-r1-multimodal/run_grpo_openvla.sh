@@ -1,4 +1,4 @@
-PROJECT_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
+PROJECT_ROOT="$(pwd)"
 export REPO_HOME="${PROJECT_ROOT}"
 echo "REPO_HOME: $REPO_HOME"
 # Change the data_paths and image_folders to your own data

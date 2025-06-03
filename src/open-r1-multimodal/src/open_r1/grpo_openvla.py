@@ -97,11 +97,14 @@ class OpenVLAConfig:
     vla_lora_dropout: float = 0.0                                       # Dropout applied to LoRA weights
     use_quantization: bool = False                                  # Whether to 4-bit quantize VLA for LoRA fine-tuning
                                                                     #   => CAUTION: Reduces memory but hurts performance
+    
+    debug: bool = False
 
 
 def main(script_args, training_args, model_args, vla_args): 
-    import pdb
-    pdb.set_trace()
+    if vla_args.debug:
+        import pdb
+        pdb.set_trace()
     
     reward_funcs = [reward_funcs_registry[func] for func in script_args.reward_funcs]
     print("reward_funcs:", reward_funcs)

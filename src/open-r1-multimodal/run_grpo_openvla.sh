@@ -48,6 +48,7 @@ torchrun --nproc_per_node="1" \
     --lora_rank 32 \
     --num_images_in_input 2 \
     --use_proprio True \
-    --image_aug True
+    --image_aug True \
+    --debug False
 
 echo "Training completed for ${EXP_NAME}"

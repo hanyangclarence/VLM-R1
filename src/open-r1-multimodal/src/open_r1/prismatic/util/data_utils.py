@@ -102,10 +102,10 @@ class PaddedCollatorForActionPrediction:
     def __call__(self, instances: Sequence[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
         input_ids, labels = tuple([instance[key] for instance in instances] for key in ("input_ids", "labels"))
         pixel_values = [instance["pixel_values"] for instance in instances]
-        if "dataset_name" in instances[0]:
-            dataset_names = [instance["dataset_name"] for instance in instances]
-        else:
-            dataset_names = None
+        # if "dataset_name" in instances[0]:
+        #     dataset_names = [instance["dataset_name"] for instance in instances]
+        # else:
+        #     dataset_names = None
 
         # For now, we only support Tokenizers with `padding_side = "right"` during training
         #   => Handle padding via RNN Utils => `pad_sequence`
@@ -146,7 +146,7 @@ class PaddedCollatorForActionPrediction:
             labels=labels,
             proprio=proprio,
         )
-        if dataset_names is not None:
-            output["dataset_names"] = dataset_names
+        # if dataset_names is not None:
+        #     output["dataset_names"] = dataset_names
         
         return output

@@ -39,7 +39,6 @@ torchrun --nproc_per_node="1" \
     --reward_funcs token_accuracy \
     --beta 0.04 \
     --report_to wandb \
-    --dataset-name this_is_not_used \
     --deepspeed local_scripts/zero3.json \
     --vla_path openvla/openvla-7b \
     --data_root_dir dataset/rl_bench_o1_dataset/2.0.0 \

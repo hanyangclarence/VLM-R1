@@ -49,6 +49,6 @@ torchrun --nproc_per_node="1" \
     --num_images_in_input 2 \
     --use_proprio True \
     --image_aug True \
-    --debug False
+    --pdb_debug False
 
 echo "Training completed for ${EXP_NAME}"

@@ -98,11 +98,11 @@ class OpenVLAConfig:
     use_quantization: bool = False                                  # Whether to 4-bit quantize VLA for LoRA fine-tuning
                                                                     #   => CAUTION: Reduces memory but hurts performance
     
-    debug: bool = False
+    pdb_debug: bool = False
 
 
 def main(script_args, training_args, model_args, vla_args): 
-    if vla_args.debug:
+    if vla_args.pdb_debug:
         import pdb
         pdb.set_trace()
     

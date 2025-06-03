@@ -156,7 +156,7 @@ class OpenVLAGRPOTrainer(Trainer):
 
         # Load OpenVLA Processor and Model using HF AutoClasses
         processor = AutoProcessor.from_pretrained(vla_args.vla_path, trust_remote_code=True)
-        vla = AutoModelForVision2Seq.from_pretrained(
+        vla = OpenVLAForActionPrediction.from_pretrained(
             vla_args.vla_path,
             torch_dtype=torch.bfloat16 if torch_dtype == "bfloat16" else torch.float32,
             attn_implementation=attn_implementation,

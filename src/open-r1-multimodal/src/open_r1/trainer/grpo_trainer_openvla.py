@@ -148,10 +148,11 @@ class OpenVLAGRPOTrainer(Trainer):
         distributed_state = PartialState()
         
         # Register OpenVLA model to HF Auto Classes (not needed if the model is on HF Hub)
-        AutoConfig.register("openvla", OpenVLAConfig)
-        AutoImageProcessor.register(OpenVLAConfig, PrismaticImageProcessor)
-        AutoProcessor.register(OpenVLAConfig, PrismaticProcessor)
-        AutoModelForVision2Seq.register(OpenVLAConfig, OpenVLAForActionPrediction)
+        model_config_class = OpenVLAForActionPrediction.config_class
+        AutoConfig.register("openvla", model_config_class)
+        AutoImageProcessor.register(model_config_class, PrismaticImageProcessor)
+        AutoProcessor.register(model_config_class, PrismaticProcessor)
+        AutoModelForVision2Seq.register(model_config_class, OpenVLAForActionPrediction)
 
         # Load OpenVLA Processor and Model using HF AutoClasses
         processor = AutoProcessor.from_pretrained(vla_args.vla_path, trust_remote_code=True)

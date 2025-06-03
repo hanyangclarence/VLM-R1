@@ -185,15 +185,14 @@ class OpenVLAGRPOTrainer(Trainer):
                 ProprioProjector,
                 "proprio_projector",
                 vla_args,
-                {"llm_dim": vla.module.llm_dim, "proprio_dim": 8},
+                {"llm_dim": vla.model.llm_dim, "proprio_dim": 8},
                 to_bf16=True,
                 warp_ddp=False
             )
-            # TODO: check where to add proprio_projector, vla.module? vla.model?
             vla.model.proprio_projector = proprio_projector
         
         # Get number of vision patches
-        NUM_PATCHES = vla.module.vision_backbone.get_num_patches() * vla.module.vision_backbone.get_num_images_in_input()
+        NUM_PATCHES = vla.model.vision_backbone.get_num_patches() * vla.model.vision_backbone.get_num_images_in_input()
         # If we have proprio inputs, a single proprio embedding is appended to the end of the vision patch embeddings
         if vla_args.use_proprio:
             NUM_PATCHES += 1
@@ -267,7 +266,7 @@ class OpenVLAGRPOTrainer(Trainer):
         
         # Create training and optional validation datasets
         batch_transform = RLDSBatchTransform(
-            action_tokenizer,
+            self.action_tokenizer,
             processor.tokenizer,
             image_transform=processor.image_processor.apply_transform,
             prompt_builder_fn=PurePromptBuilder,
@@ -278,7 +277,7 @@ class OpenVLAGRPOTrainer(Trainer):
             vla_args.data_root_dir,
             vla_args.vla_dataset_name,
             batch_transform,
-            resize_resolution=tuple(vla.module.config.image_sizes),
+            resize_resolution=tuple(vla.model.config.image_sizes),
             shuffle_buffer_size=vla_args.shuffle_buffer_size,
             image_aug=vla_args.image_aug,
         )
@@ -286,7 +285,7 @@ class OpenVLAGRPOTrainer(Trainer):
             vla_args.data_root_dir,
             vla_args.vla_dataset_name,
             batch_transform,
-            resize_resolution=tuple(vla.module.config.image_sizes),
+            resize_resolution=tuple(vla.model.config.image_sizes),
             shuffle_buffer_size=vla_args.shuffle_buffer_size // 10,
             image_aug=vla_args.image_aug,
             train=False,

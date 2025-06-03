@@ -16,6 +16,7 @@ import os
 import textwrap
 from collections import defaultdict
 from typing import Any, Callable, Optional, Union, Sized
+from pathlib import Path
 
 import torch
 import torch.utils.data
@@ -294,7 +295,7 @@ class OpenVLAGRPOTrainer(Trainer):
         
         # [Important] Save dataset statistics so that we can unnormalize actions during inference
         if distributed_state.is_main_process:
-            save_dataset_statistics(train_dataset.dataset_statistics, args.output_dir)
+            save_dataset_statistics(train_dataset.dataset_statistics, Path(args.output_dir))
         
         collator = PaddedCollatorForActionPrediction(
             processor.tokenizer.model_max_length, processor.tokenizer.pad_token_id, padding_side="right"

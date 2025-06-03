@@ -107,6 +107,7 @@ def main(script_args, training_args, model_args, vla_args):
     print("reward_funcs:", reward_funcs)
 
     # Initialize the GRPO trainer
+    vla_args.output_dir = training_args.output_dir
     trainer = OpenVLAGRPOTrainer(
         vla_path=vla_args.vla_path,
         reward_funcs=reward_funcs,

@@ -21,7 +21,7 @@ torchrun --nproc_per_node="1" \
     --node_rank="0" \
   src/open_r1/grpo_openvla.py \
     --use_vllm False \
-    --output_dir ${REPO_HOME}/checkpoints/rl/${EXP_NAME} \
+    --output_dir ${REPO_HOME}/runs/${EXP_NAME} \
     --dataset_name this_is_not_used \
     --resume_from_checkpoint True \
     --model_name_or_path $model_path \

@@ -161,7 +161,7 @@ class OpenVLAGRPOTrainer(Trainer):
 
         # Load OpenVLA Processor and Model using HF AutoClasses
         processor = AutoProcessor.from_pretrained(vla_args.vla_path, trust_remote_code=True)
-        vla = OpenVLAForActionPrediction.from_pretrained(
+        vla = AutoModelForVision2Seq.from_pretrained(
             vla_args.vla_path,
             torch_dtype=torch_dtype,
             attn_implementation=attn_implementation,
@@ -222,7 +222,6 @@ class OpenVLAGRPOTrainer(Trainer):
                 vla_args.vla_path,
                 torch_dtype=torch_dtype,
                 attn_implementation=attn_implementation,
-                low_cpu_mem_usage=True,
                 trust_remote_code=True,
             )
         elif is_peft_model(vla):

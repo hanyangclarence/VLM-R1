@@ -40,6 +40,7 @@ torchrun --nproc_per_node="1" \
     --reward_funcs token_accuracy \
     --beta 0.04 \
     --report_to wandb \
+    --deepspeed local_scripts/zero2.json \
     --vla_path openvla/openvla-7b \
     --data_root_dir /gpfs/yanghan/openvla-mini-o1/dataset/rl_bench_o1_dataset/2.0.0 \
     --vla_dataset_name rlbencho1 \

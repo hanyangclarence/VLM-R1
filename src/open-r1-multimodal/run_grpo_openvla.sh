@@ -9,12 +9,13 @@ export EXP_NAME="openvla-rl" # TODO: change this to your own experiment name
 
 export DEBUG_MODE="true" # Enable Debug if you want to see the rollout of model during RL
 # create the run directory and log file
-mkdir -p ${REPO_HOME}/runs/${EXP_NAME}/log
-export LOG_PATH="${REPO_HOME}/runs/${EXP_NAME}/log/debug_log.$(date +%Y-%m-%d-%H-%M-%S).txt"
-# MAX_STEPS=1200 # TODO: change this to your own max steps
+mkdir -p ${REPO_HOME}/runs/${EXP_NAME}
 
+export WANDB_DISABLED=false
+export WANDB_API_KEY=28b3c634497c0dc6c16767729d4719b1012a94f2
+export WANDB_PROJECT=openvla-rl
+export WANDB_ENTITY=mahlerrrr76
 
-export WANDB_DISABLED=true
 # CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6
 torchrun --nproc_per_node="1" \
     --nnodes="1" \

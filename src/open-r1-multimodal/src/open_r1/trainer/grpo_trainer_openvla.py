@@ -177,7 +177,7 @@ class OpenVLAGRPOTrainer(Trainer):
             lora_config = LoraConfig(
                 r=vla_args.lora_rank,
                 lora_alpha=min(vla_args.lora_rank, 16),
-                lora_dropout=vla_args.lora_dropout,
+                lora_dropout=vla_args.vla_lora_dropout,
                 target_modules="all-linear",
                 init_lora_weights="gaussian",
             )

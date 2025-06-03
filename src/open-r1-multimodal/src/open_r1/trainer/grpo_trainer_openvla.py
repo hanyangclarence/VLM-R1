@@ -54,7 +54,7 @@ from open_r1.prismatic.extern.hf.configuration_prismatic import OpenVLAConfig
 from open_r1.prismatic.extern.hf.modeling_prismatic import OpenVLAForActionPrediction
 from open_r1.prismatic.extern.hf.processing_prismatic import PrismaticImageProcessor, PrismaticProcessor
 from open_r1.prismatic.models.backbones.llm.prompting import PurePromptBuilder
-from open_r1.prismatic.models.projectors import ProprioProjector,
+from open_r1.prismatic.models.projectors import ProprioProjector
 from open_r1.prismatic.util.data_utils import PaddedCollatorForActionPrediction
 from prismatic.vla.action_tokenizer import ActionTokenizer
 from open_r1.prismatic.vla.datasets import RLDSBatchTransform, RLDSDataset

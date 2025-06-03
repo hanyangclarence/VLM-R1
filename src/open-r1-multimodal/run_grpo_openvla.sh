@@ -22,6 +22,7 @@ torchrun --nproc_per_node="1" \
   src/open_r1/grpo_openvla.py \
     --use_vllm False \
     --output_dir ${REPO_HOME}/checkpoints/rl/${EXP_NAME} \
+    --dataset-name this_is_not_used \
     --resume_from_checkpoint True \
     --model_name_or_path $model_path \
     --per_device_train_batch_size 8 \

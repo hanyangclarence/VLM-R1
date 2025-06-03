@@ -19,6 +19,7 @@ from open_r1.utils.pycocotools.cocoeval import COCOeval
 import json
 import math
 from json_repair import repair_json
+import torch
 
 from transformers import AutoProcessor, AutoTokenizer
 
@@ -833,9 +834,35 @@ def format_reward(completions, **kwargs):
     return [1.0 if match else 0.0 for match in matches]
 
 
+def token_accuracy_reward(pred_ids, gt_ids, action_tokenizer, action_dim=7, action_weight_ratio=[3, 3, 3, 2, 2, 2, 1]):
+    action_weight_ratio = torch.tensor(action_weight_ratio)
+    action_weight_ratio = action_weight_ratio / action_weight_ratio.sum()
+    assert action_weight_ratio.shape[0] == action_dim, f"action_weight_ratio should have {action_dim} elements, but got {action_weight_ratio.shape[0]}"
+    
+    rewards = []
+    for batch_idx, (pred, gt) in enumerate(zip(pred_ids, gt_ids)):
+        pred_action_ids = pred[pred > action_tokenizer.action_token_begin_idx]
+        gt_action_ids = gt[gt > action_tokenizer.action_token_begin_idx]
+        
+        if pred_action_ids.shape != gt_action_ids.shape:
+            rewards.append(0.0)
+            continue
+        
+        assert len(pred_action_ids) == action_dim, f"pred_action_ids should have {action_dim} elements, but got {len(pred_action_ids)}"
+        
+        reward = 0.0
+        for pos_idx in range(pred_action_ids.shape[0]):
+            pred_action_id = pred_action_ids[pos_idx]
+            gt_action_id = gt_action_ids[pos_idx]
+            reward += (pred_action_id == gt_action_id).float() * action_weight_ratio[pos_idx]
+        rewards.append(reward.item())
+    return rewards
+
+
 reward_funcs_registry = {
     "accuracy": accuracy_reward,
     "format": format_reward,
     "length": cosine_rewards,
     "repetition": repetition_rewards,
+    "token_accuracy": token_accuracy_reward,
 }

@@ -101,6 +101,7 @@ def init_module(
     module_args: dict,
     to_bf16: bool = False,
     find_unused_params: bool = False,
+    warp_ddp: bool = True,
 ) -> DDP:
     """
     Initializes a module, optionally loads checkpoint, moves to device, and wraps with DDP.
@@ -128,7 +129,10 @@ def init_module(
         module = module.to(torch.bfloat16)
     module = module.to(device_id)
 
-    return wrap_ddp(module, device_id, find_unused_params)
+    if warp_ddp:
+        return wrap_ddp(module, device_id, find_unused_params)
+    else:
+        return module
 
 
 def compute_token_accuracy(predicted_token_ids, ground_truth_token_ids, mask):

@@ -77,14 +77,13 @@ class RLDSBatchTransform:
         conversation.extend(
             [
                 {"from": "human", "value": f"What action should the robot take to {lang}?"},
-                {"from": "gpt", "value": full_target},
+                {"from": "gpt", "value": ""},
             ]
         )
         
-        full_target_tokens = self.base_tokenizer(full_target, add_special_tokens=True)["input_ids"]
-        num_answer_tokens = len(full_target_tokens)
-        if full_target_tokens[0] == self.base_tokenizer.bos_token_id:
-            num_answer_tokens -= 1
+        labels = self.base_tokenizer(full_target, add_special_tokens=True)["input_ids"]
+        if labels[0] == self.base_tokenizer.bos_token_id:
+            labels = labels[1:]
 
         # Construct Chat-based Prompt
         prompt_builder = self.prompt_builder_fn("openvla")
@@ -93,8 +92,8 @@ class RLDSBatchTransform:
 
         # Tokenize (w/ `base_tokenizer`)
         input_ids = self.base_tokenizer(prompt_builder.get_prompt(), add_special_tokens=True).input_ids
-        
-        labels = list(input_ids)
+        if input_ids[-1] == self.base_tokenizer.eos_token_id:
+            input_ids = input_ids[:-1]
 
         # Tensorize =>> Run Image Transform to get `pixel_values` =>> Return
         input_ids, labels = torch.tensor(input_ids), torch.tensor(labels)
@@ -103,16 +102,6 @@ class RLDSBatchTransform:
             pixel_values = torch.cat(pixel_values, dim=0)
         else:
             pixel_values = self.image_transform(img)
-
-        # critical, some tokenizers have different numbers of "end tokens".
-        num_end_tokens = 1
-        if isinstance(self.base_tokenizer, Qwen2TokenizerFast):
-            # Qwen has <|im_end|><|endoftext|> for example
-            num_end_tokens = 2
-
-        labels[: -(num_answer_tokens + num_end_tokens)] = IGNORE_INDEX
-        if not self.predict_stop_token:
-            labels[-num_end_tokens:] = IGNORE_INDEX
 
         return_dict = dict(pixel_values=pixel_values, input_ids=input_ids, labels=labels, dataset_name=dataset_name)
         

@@ -47,6 +47,20 @@ from trl.trainer.grpo_config import GRPOConfig
 from trl.trainer.utils import generate_model_card, get_comet_experiment_url
 # from trl import GRPOTrainer
 
+from transformers import AutoConfig, AutoImageProcessor, AutoModelForVision2Seq, AutoProcessor
+
+from open_r1.vlm_modules.vlm_module import VLMBaseModule
+from open_r1.prismatic.extern.hf.configuration_prismatic import OpenVLAConfig
+from open_r1.prismatic.extern.hf.modeling_prismatic import OpenVLAForActionPrediction
+from open_r1.prismatic.extern.hf.processing_prismatic import PrismaticImageProcessor, PrismaticProcessor
+from open_r1.prismatic.models.backbones.llm.prompting import PurePromptBuilder
+from open_r1.prismatic.models.projectors import ProprioProjector,
+from open_r1.prismatic.util.data_utils import PaddedCollatorForActionPrediction
+from prismatic.vla.action_tokenizer import ActionTokenizer
+from open_r1.prismatic.vla.datasets import RLDSBatchTransform, RLDSDataset
+from open_r1.prismatic.vla.datasets.rlds.utils.data_utils import save_dataset_statistics
+from open_r1.prismatic.training.finetune_utils import *
+
 from accelerate.utils import is_peft_model, set_seed
 import PIL.Image
 
@@ -117,181 +131,87 @@ class RepeatRandomSampler(Sampler):
 
 
 class OpenVLAGRPOTrainer(Trainer):
-    """
-    Trainer for the Group Relative Policy Optimization (GRPO) method. This algorithm was initially proposed in the
-    paper [DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models](https://huggingface.co/papers/2402.03300).
-
-    Example:
-
-    ```python
-    from datasets import load_dataset
-    from trl import GRPOTrainer
-
-    dataset = load_dataset("trl-lib/tldr", split="train")
-
-    trainer = GRPOTrainer(
-        model="Qwen/Qwen2-0.5B-Instruct",
-        reward_funcs="weqweasdas/RM-Gemma-2B",
-        train_dataset=dataset,
-    )
-
-    trainer.train()
-    ```
-
-    Args:
-        model (`Union[str, PreTrainedModel]`):
-            Model to be trained. Can be either:
-
-            - A string, being the *model id* of a pretrained model hosted inside a model repo on huggingface.co, or
-              a path to a *directory* containing model weights saved using
-              [`~transformers.PreTrainedModel.save_pretrained`], e.g., `'./my_model_directory/'`. The model is
-              loaded using [`~transformers.AutoModelForCausalLM.from_pretrained`] with the keywork arguments
-              in `args.model_init_kwargs`.
-            - A [`~transformers.PreTrainedModel`] object. Only causal language models are supported.
-        reward_funcs (`Union[RewardFunc, list[RewardFunc]]`):
-            Reward functions to be used for computing the rewards. To compute the rewards, we call all the reward
-            functions with the prompts and completions and sum the rewards. Can be either:
-
-            - A single reward function, such as:
-                - A string: The *model ID* of a pretrained model hosted inside a model repo on huggingface.co, or a
-                path to a *directory* containing model weights saved using
-                [`~transformers.PreTrainedModel.save_pretrained`], e.g., `'./my_model_directory/'`. The model is loaded
-                using [`~transformers.AutoModelForSequenceClassification.from_pretrained`] with `num_labels=1` and the
-                keyword arguments in `args.model_init_kwargs`.
-                - A [`~transformers.PreTrainedModel`] object: Only sequence classification models are supported.
-                - A custom reward function: The function is provided with the prompts and the generated completions,
-                  plus any additional columns in the dataset. It should return a list of rewards. For more details, see
-                  [Using a custom reward function](#using-a-custom-reward-function).
-            - A list of reward functions, where each item can independently be any of the above types. Mixing different
-            types within the list (e.g., a string model ID and a custom reward function) is allowed.
-        args ([`GRPOConfig`], *optional*, defaults to `None`):
-            Configuration for this trainer. If `None`, a default configuration is used.
-        train_dataset ([`~datasets.Dataset`] or [`~datasets.IterableDataset`]):
-            Dataset to use for training. It must include a column `"prompt"`. Any additional columns in the dataset is
-            ignored. The format of the samples can be either:
-
-            - [Standard](dataset_formats#standard): Each sample contains plain text.
-            - [Conversational](dataset_formats#conversational): Each sample contains structured messages (e.g., role
-              and content).
-        eval_dataset ([`~datasets.Dataset`], [`~datasets.IterableDataset`] or `dict[str, Union[Dataset, IterableDataset]]`):
-            Dataset to use for evaluation. It must meet the same requirements as `train_dataset`.
-        processing_class ([`~transformers.PreTrainedTokenizerBase`], *optional*, defaults to `None`):
-            Processing class used to process the data. The padding side must be set to "left". If `None`, the
-            processing class is loaded from the model's name with [`~transformers.AutoTokenizer.from_pretrained`].
-        reward_processing_classes (`Union[PreTrainedTokenizerBase, list[PreTrainedTokenizerBase]]`, *optional*, defaults to `None`):
-            Processing classes corresponding to the reward functions specified in `reward_funcs`. Can be either:
-
-            - A single processing class: Used when `reward_funcs` contains only one reward function.
-            - A list of processing classes: Must match the order and length of the reward functions in `reward_funcs`.
-            If set to `None`, or if an element of the list corresponding to a [`~transformers.PreTrainedModel`] is
-            `None`, the tokenizer for the model is automatically loaded using [`~transformers.AutoTokenizer.from_pretrained`].
-            For elements in `reward_funcs` that are custom reward functions (not [`~transformers.PreTrainedModel`]),
-            the corresponding entries in `reward_processing_classes` are ignored.
-        callbacks (list of [`~transformers.TrainerCallback`], *optional*, defaults to `None`):
-            List of callbacks to customize the training loop. Will add those to the list of default callbacks
-            detailed in [here](https://huggingface.co/docs/transformers/main_classes/callback).
-
-            If you want to remove one of the default callbacks used, use the [`~transformers.Trainer.remove_callback`]
-            method.
-        optimizers (`tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR]`, *optional*, defaults to `(None, None)`):
-            A tuple containing the optimizer and the scheduler to use. Will default to an instance of [`AdamW`] on your
-            model and a scheduler given by [`get_linear_schedule_with_warmup`] controlled by `args`.
-        peft_config ([`~peft.PeftConfig`], *optional*, defaults to `None`):
-            PEFT configuration used to wrap the model. If `None`, the model is not wrapped.
-    """
-
     def __init__(
         self,
-        model: Union[str, PreTrainedModel],
+        vla_path: str,
         reward_funcs: Union[RewardFunc, list[RewardFunc]],
         args: GRPOConfig = None,
-        vlm_module: VLMBaseModule = None,
-        train_dataset: Optional[Union[Dataset, IterableDataset]] = None,
-        eval_dataset: Optional[Union[Dataset, IterableDataset, dict[str, Union[Dataset, IterableDataset]]]] = None,
-        processing_class: Optional[PreTrainedTokenizerBase] = None,
+        vla_args = None,
         reward_processing_classes: Optional[Union[PreTrainedTokenizerBase, list[PreTrainedTokenizerBase]]] = None,
         callbacks: Optional[list[TrainerCallback]] = None,
         optimizers: tuple[Optional[torch.optim.Optimizer], Optional[torch.optim.lr_scheduler.LambdaLR]] = (None, None),
-        peft_config: Optional["PeftConfig"] = None,
-        freeze_vision_modules: Optional[bool] = False,
         attn_implementation: str = "flash_attention_2",
         torch_dtype: str = "bfloat16",
-        **kwargs,
     ):
         # Args
         if args is None:
-            model_name = model if isinstance(model, str) else model.config._name_or_path
-            model_name = model_name.split("/")[-1]
-            args = GRPOConfig(f"{model_name}-GRPO")
+            args = GRPOConfig(f"{vla_path}-GRPO")
         
-        self.vlm_module = vlm_module
+        # Trim trailing forward slash ('/') in VLA path if it exists
+        print(f"Fine-tuning OpenVLA Model `{vla_args.vla_path}` on `{vla_args.dataset_name}`")
+        
+        # GPU setup
+        distributed_state = PartialState()
+        
+        # Register OpenVLA model to HF Auto Classes (not needed if the model is on HF Hub)
+        AutoConfig.register("openvla", OpenVLAConfig)
+        AutoImageProcessor.register(OpenVLAConfig, PrismaticImageProcessor)
+        AutoProcessor.register(OpenVLAConfig, PrismaticProcessor)
+        AutoModelForVision2Seq.register(OpenVLAConfig, OpenVLAForActionPrediction)
 
-        # Models
-        # Trained model
-        model_init_kwargs = args.model_init_kwargs or {}
-        # FIXME
-        # Remember to modify it in the invernvl
-        model_init_kwargs["attn_implementation"] = attn_implementation
-        if model_init_kwargs.get("torch_dtype") is None:
-            model_init_kwargs["torch_dtype"] = torch_dtype
-        
-        assert isinstance(model, str), "model must be a string in the current implementation"
-        model_id = model
-        torch_dtype = model_init_kwargs.get("torch_dtype")
-        if isinstance(torch_dtype, torch.dtype) or torch_dtype == "auto" or torch_dtype is None:
-            pass  # torch_dtype is already a torch.dtype or "auto" or None
-        elif isinstance(torch_dtype, str):  # it's a str, but not "auto"
-            torch_dtype = getattr(torch, torch_dtype)
-        else:
-            raise ValueError(
-                "Invalid `torch_dtype` passed to `GRPOConfig`. Expected either 'auto' or a string representing "
-                f"a `torch.dtype` (e.g., 'float32'), but got {torch_dtype}."
-            )
-        # Disable caching if gradient checkpointing is enabled (not supported)
-        model_init_kwargs["use_cache"] = (
-            False if args.gradient_checkpointing else model_init_kwargs.get("use_cache")
+        # Load OpenVLA Processor and Model using HF AutoClasses
+        processor = AutoProcessor.from_pretrained(vla_args.vla_path, trust_remote_code=True)
+        vla = OpenVLAForActionPrediction.from_pretrained(
+            vla_args.vla_path,
+            torch_dtype=torch_dtype,
+            attn_implementation=attn_implementation,
+            low_cpu_mem_usage=True,
+            trust_remote_code=True,
         )
-        model_cls = self.vlm_module.get_model_class(model_id, model_init_kwargs)
-        model = model_cls.from_pretrained(model_id, **model_init_kwargs)
+        
+        # Set number of images in VLA input
+        vla.vision_backbone.set_num_images_in_input(vla_args.num_images_in_input)
 
-        # LoRA
-        self.vision_modules_keywords = self.vlm_module.get_vision_modules_keywords()
-        if peft_config is not None:
-            print("Applying LoRA...")
-            def find_all_linear_names(model, multimodal_keywords):
-                cls = torch.nn.Linear
-                lora_module_names = set()
-                for name, module in model.named_modules():
-                    # LoRA is not applied to the vision modules
-                    if any(mm_keyword in name for mm_keyword in multimodal_keywords):
-                        continue
-                    if isinstance(module, cls):
-                        lora_module_names.add(name)
-                for m in lora_module_names:  # needed for 16-bit
-                    if "embed_tokens" in m:
-                        lora_module_names.remove(m)
-                return list(lora_module_names)
-            target_modules = find_all_linear_names(model, self.vision_modules_keywords)
-            peft_config.target_modules = target_modules
-            model = get_peft_model(model, peft_config)
+        # LoRA setup
+        if vla_args.use_lora:
+            lora_config = LoraConfig(
+                r=vla_args.lora_rank,
+                lora_alpha=min(vla_args.lora_rank, 16),
+                lora_dropout=vla_args.lora_dropout,
+                target_modules="all-linear",
+                init_lora_weights="gaussian",
+            )
+            vla = get_peft_model(vla, lora_config)
+            vla.print_trainable_parameters()
 
-        # Freeze vision modules
-        if freeze_vision_modules:
-            print("Freezing vision modules...")
-            for n, p in model.named_parameters():
-                if any(keyword in n for keyword in self.vision_modules_keywords):
-                    p.requires_grad = False
-        # Compute the number of trainable parameters and print the parameter that is trainable
-        trainable_params = [p for p in model.parameters() if p.requires_grad]
-        total_params = sum(p.numel() for p in trainable_params)
-        # for n, p in model.named_parameters():
-        #     if p.requires_grad:
-        #         print(n, p.shape)
-        print(f"Total trainable parameters: {total_params}")
+        # If applicable, instantiate proprio projector
+        if vla_args.use_proprio:
+            proprio_projector = init_module(
+                ProprioProjector,
+                "proprio_projector",
+                vla_args,
+                {"llm_dim": vla.module.llm_dim, "proprio_dim": 8},
+                to_bf16=True,
+                warp_ddp=False
+            )
+            # TODO: check where to add proprio_projector, vla.module? vla.model?
+            vla.model.proprio_projector = proprio_projector
+        
+        # Get number of vision patches
+        NUM_PATCHES = vla.module.vision_backbone.get_num_patches() * vla.module.vision_backbone.get_num_images_in_input()
+        # If we have proprio inputs, a single proprio embedding is appended to the end of the vision patch embeddings
+        if vla_args.use_proprio:
+            NUM_PATCHES += 1
+        
+        # TODO: check whether proprio_projector is in trainable parameters
+        
+        # Create Action Tokenizer
+        self.action_tokenizer = ActionTokenizer(processor.tokenizer)
 
         # Enable gradient checkpointing if requested
+        # TODO: check whether this part is implemented
         if args.gradient_checkpointing:
-            model = self._enable_gradient_checkpointing(model, args)
+            vla = self._enable_gradient_checkpointing(vla, args)
 
         # Reference model
         self.beta = args.beta
@@ -299,46 +219,33 @@ class OpenVLAGRPOTrainer(Trainer):
             # If beta is 0.0, the reference model is not needed
             self.ref_model = None
         elif is_deepspeed_zero3_enabled():
-            self.ref_model = model_cls.from_pretrained(model_id, **model_init_kwargs)
-        elif is_peft_model(model):
+            self.ref_model = AutoModelForVision2Seq.from_pretrained(
+                vla_args.vla_path,
+                torch_dtype=torch_dtype,
+                attn_implementation=attn_implementation,
+                low_cpu_mem_usage=True,
+                trust_remote_code=True,
+            )
+        elif is_peft_model(vla):
             # If PEFT is used, the reference model is not needed since the adapter can be disabled
             # to revert to the initial model.
             self.ref_model = None
         else:
             # If PEFT configuration is not provided, create a reference model based on the initial model.
+            assert False, f"Not implemented yet"
             self.ref_model = create_reference_model(model)
-
-        # Processing class
-        if processing_class is None:
-            processing_cls = self.vlm_module.get_processing_class()
-            processing_class = processing_cls.from_pretrained(model_id, trust_remote_code=model_init_kwargs.get("trust_remote_code", None))
-            for component, processing_keyword in self.vlm_module.get_custom_processing_keywords():
-                if processing_keyword in kwargs:
-                    # If we cannot find component in processing_class, return the processing_class itself
-                    processing_component = getattr(processing_class, component, processing_class)
-                    setattr(processing_component, processing_keyword, kwargs[processing_keyword])
-            if getattr(processing_class, "tokenizer",  None) is not None:
-                pad_token_id = processing_class.tokenizer.pad_token_id
-                processing_class.pad_token_id = pad_token_id
-                processing_class.eos_token_id = processing_class.tokenizer.eos_token_id
-            else:
-                assert isinstance(processing_class, PreTrainedTokenizerBase), "processing_class must be an instance of PreTrainedTokenizerBase if it has no tokenizer attribute"
-                pad_token_id = processing_class.pad_token_id
-
-        self.vlm_module.post_model_init(model, processing_class)
-        self.vlm_module.post_model_init(self.ref_model, processing_class)
+        
+        pad_token_id = processor.tokenizer.pad_token_id
+        processor.pad_token_id = pad_token_id
+        processor.eos_token_id = processor.tokenizer.eos_token_id
 
         # Reward functions
         if not isinstance(reward_funcs, list):
             reward_funcs = [reward_funcs]
-        for i, reward_func in enumerate(reward_funcs):
-            if isinstance(reward_func, str):
-                reward_funcs[i] = AutoModelForSequenceClassification.from_pretrained(
-                    reward_func, num_labels=1, **model_init_kwargs
-                )
         self.reward_funcs = reward_funcs
 
         # Reward processing class
+        # TODO
         if reward_processing_classes is None:
             reward_processing_classes = [None] * len(reward_funcs)
         elif not isinstance(reward_processing_classes, list):
@@ -358,10 +265,46 @@ class OpenVLAGRPOTrainer(Trainer):
                 reward_func.config.pad_token_id = reward_processing_class.pad_token_id
                 reward_processing_classes[i] = reward_processing_class
         self.reward_processing_classes = reward_processing_classes
-
-        # Data collator
-        def data_collator(features):  # No data collation is needed in GRPO
-            return features
+        
+        # Init dataset
+        
+        # We assume that the model takes as input one third-person camera image and 1 or 2 optional wrist camera image(s)
+        use_wrist_image = vla_args.num_images_in_input > 1
+        
+        # Create training and optional validation datasets
+        batch_transform = RLDSBatchTransform(
+            action_tokenizer,
+            processor.tokenizer,
+            image_transform=processor.image_processor.apply_transform,
+            prompt_builder_fn=PurePromptBuilder,
+            use_wrist_image=use_wrist_image,
+            use_proprio=vla_args.use_proprio,
+        )
+        train_dataset = RLDSDataset(
+            vla_args.data_root_dir,
+            vla_args.dataset_name,
+            batch_transform,
+            resize_resolution=tuple(vla.module.config.image_sizes),
+            shuffle_buffer_size=vla_args.shuffle_buffer_size,
+            image_aug=vla_args.image_aug,
+        )
+        val_dataset = RLDSDataset(
+            vla_args.data_root_dir,
+            vla_args.dataset_name,
+            batch_transform,
+            resize_resolution=tuple(vla.module.config.image_sizes),
+            shuffle_buffer_size=vla_args.shuffle_buffer_size // 10,
+            image_aug=vla_args.image_aug,
+            train=False,
+        )
+        
+        # [Important] Save dataset statistics so that we can unnormalize actions during inference
+        if distributed_state.is_main_process:
+            save_dataset_statistics(train_dataset.dataset_statistics, args.output_dir)
+        
+        collator = PaddedCollatorForActionPrediction(
+            processor.tokenizer.model_max_length, processor.tokenizer.pad_token_id, padding_side="right"
+        )
 
         # Training arguments
         self.max_prompt_length = args.max_prompt_length
@@ -377,8 +320,7 @@ class OpenVLAGRPOTrainer(Trainer):
             temperature=1,
             pad_token_id=pad_token_id,
         )
-        if hasattr(self.vlm_module, "get_eos_token_id"): # For InternVL
-            self.generation_config.eos_token_id = self.vlm_module.get_eos_token_id(processing_class)
+        self.generation_config.eos_token_id = processor.tokenizer.eos_token_id
         self.beta = args.beta
         self.epsilon_low = args.epsilon
         self.epsilon_high = args.epsilon_high if args.epsilon_high is not None else args.epsilon
@@ -396,18 +338,18 @@ class OpenVLAGRPOTrainer(Trainer):
         # "Could not estimate the number of tokens of the input, floating-point operations will not be computed." To
         # suppress this warning, we set the "estimate_tokens" key in the model's "warnings_issued" dictionary to True.
         # This acts as a flag to indicate that the warning has already been issued.
-        model.warnings_issued["estimate_tokens"] = True
+        vla.warnings_issued["estimate_tokens"] = True
 
         # Initialize the metrics
         self._metrics = defaultdict(list)
 
         super().__init__(
-            model=model,
+            model=vla,
             args=args,
-            data_collator=data_collator,
+            data_collator=collator,
             train_dataset=train_dataset,
-            eval_dataset=eval_dataset,
-            processing_class=processing_class,
+            eval_dataset=val_dataset,
+            processing_class=processor,
             callbacks=callbacks,
             optimizers=optimizers,
         )
@@ -521,72 +463,25 @@ class OpenVLAGRPOTrainer(Trainer):
 
     def _generate_and_score_completions(self, inputs: dict[str, Union[torch.Tensor, Any]], model) -> dict[str, Union[torch.Tensor, Any]]:
         device = self.accelerator.device
-        prompts = [x["prompt"] for x in inputs]
-        prompts_text = self.vlm_module.prepare_prompt(self.processing_class, inputs)
-        # Handle both pre-loaded images and image paths
-        images = []
-        for x in inputs:
-            if "image" in x:
-                imgs = self._get_key_from_inputs(x, "image")
-            elif "image_path" in x and x["image_path"] is not None:
-                imgs = [PIL.Image.open(p) for p in self._get_key_from_inputs(x, "image_path")]
-            else:
-                imgs = []
-
-            for img in imgs:
-                try:
-                    # Ensure minimum dimensions of 28 pixels
-                    w, h = img.size
-                    if w < 28 or h < 28:
-                    # Calculate new dimensions maintaining aspect ratio
-                        if w < h:
-                            new_w = 28
-                            new_h = int(h * (28/w))
-                        else:
-                            new_h = 28
-                            new_w = int(w * (28/h))
-                    img = img.resize((new_w, new_h), PIL.Image.Resampling.LANCZOS)
-                except:
-                    pass
-                images.append(img)
-                
-
-        prompt_inputs = self.vlm_module.prepare_model_inputs(
-            self.processing_class,
-            prompts_text,
-            images,
-            return_tensors="pt",
-            padding=True,
-            padding_side="left",
-            add_special_tokens=False,
-        )
-        prompt_inputs = super()._prepare_inputs(prompt_inputs)
-        prompt_ids, prompt_mask = prompt_inputs["input_ids"], prompt_inputs["attention_mask"]
-
-
-        # max_prompt_length is not supported yet
-        # if self.max_prompt_length is not None:
-        #     prompt_ids = prompt_ids[:, -self.max_prompt_length :]
-        #     prompt_inputs["input_ids"] = prompt_ids
-        #     prompt_mask = prompt_mask[:, -self.max_prompt_length :]
-        #     prompt_inputs["attention_mask"] = prompt_mask
+        input_ids, prompt_mask = inputs["input_ids"], inputs["attention_mask"]
+        pixel_values, proprio = inputs["pixel_values"], inputs["proprio"]
 
         # Generate completions
-        with unwrap_model_for_generation(model, self.accelerator) as unwrapped_model:
-            generate_returned_result = unwrapped_model.generate(
-                **{k: v for k, v in prompt_inputs.items() if k not in self.vlm_module.get_non_generate_params()}, 
-                generation_config=self.generation_config
+        with unwrap_model_for_generation(model, self.accelerator) as unwrapped_model:            
+            proprio_projector = unwrapped_model.proprio_projector
+            generated_ids = unwrapped_model.generate(
+                input_ids=input_ids,
+                attention_mask=prompt_mask,
+                pixel_values=pixel_values,
+                proprio=proprio,
+                proprio_projector=proprio_projector,
+                generation_config=self.generation_config,
             )
-            prompt_length = prompt_ids.size(1)
-            if not self.vlm_module.is_embeds_input():
-                prompt_completion_ids = generate_returned_result
-                prompt_ids = prompt_completion_ids[:, :prompt_length]
-                completion_ids = prompt_completion_ids[:, prompt_length:]
-            else:
-                # In this case, the input of the LLM backbone is the embedding of the combination of the image and text prompt
-                # So the returned result of the `generate` method only contains the completion ids
-                completion_ids = generate_returned_result
-                prompt_completion_ids = torch.cat([prompt_ids, completion_ids], dim=1)
+            
+            prompt_length = input_ids.shape[1]
+            prompt_completion_ids = generated_ids
+            prompt_ids = prompt_completion_ids[:, :prompt_length]
+            completion_ids = prompt_completion_ids[:, prompt_length:]
 
         # Mask everything after the first EOS token
         is_eos = completion_ids == self.processing_class.eos_token_id
@@ -599,8 +494,7 @@ class OpenVLAGRPOTrainer(Trainer):
         attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)  # (B, P+C)
 
         # Get the multimodal inputs
-        multimodal_keywords = self.vlm_module.get_custom_multimodal_keywords()
-        multimodal_inputs = {k: prompt_inputs[k] if k in prompt_inputs else None for k in multimodal_keywords}
+        multimodal_inputs = {"pixel_values": pixel_values, "proprio": proprio, "proprio_projector": proprio_projector}
         with torch.no_grad():
             # When using num_iterations == 1, old_per_token_logps == per_token_logps, so we can skip its
             # computation here, and use per_token_logps.detach() instead.
@@ -626,40 +520,15 @@ class OpenVLAGRPOTrainer(Trainer):
         if ref_per_token_logps is not None:
             ref_per_token_logps = ref_per_token_logps[:, prompt_length - 1:]
 
-        # Decode the generated completions
-        completions = self.processing_class.batch_decode(completion_ids, skip_special_tokens=True)
-        if is_conversational(inputs[0]):
-            completions = [[{"role": "assistant", "content": completion}] for completion in completions]
-
         # Compute the rewards
         # No need to duplicate prompts as we're not generating multiple completions per prompt
 
-        rewards_per_func = torch.zeros(len(prompts), len(self.reward_funcs), device=device)
+        rewards_per_func = torch.zeros(len(input_ids), len(self.reward_funcs), device=device)
         for i, (reward_func, reward_processing_class) in enumerate(
             zip(self.reward_funcs, self.reward_processing_classes)
         ):
-            if isinstance(reward_func, PreTrainedModel):
-                if is_conversational(inputs[0]):
-                    messages = [{"messages": p + c} for p, c in zip(prompts, completions)]
-                    texts = [apply_chat_template(x, reward_processing_class)["text"] for x in messages]
-                else:
-                    texts = [p + c for p, c in zip(prompts, completions)]
-                reward_inputs = reward_processing_class(
-                    texts, return_tensors="pt", padding=True, padding_side="right", add_special_tokens=False
-                )
-                reward_inputs = super()._prepare_inputs(reward_inputs)
-                with torch.inference_mode():
-                    rewards_per_func[:, i] = reward_func(**reward_inputs).logits[:, 0]  # Shape (B*G,)
-            else:
-                # Repeat all input columns (but "prompt" and "completion") to match the number of generations
-                reward_kwargs = {key: [] for key in inputs[0].keys() if key not in ["prompt", "completion"]}
-                for key in reward_kwargs:
-                    for example in inputs:
-                        # No need to duplicate prompts as we're not generating multiple completions per prompt
-                        # reward_kwargs[key].extend([example[key]] * self.num_generations)
-                        reward_kwargs[key].extend([example[key]])
-                output_reward_func = reward_func(prompts=prompts, completions=completions, **reward_kwargs)
-                rewards_per_func[:, i] = torch.tensor(output_reward_func, dtype=torch.float32, device=device)
+            output_reward_func = reward_func(completion_ids, input["labels"], self.action_tokenizer)
+            rewards_per_func[:, i] = torch.tensor(output_reward_func, dtype=torch.float32, device=device)
 
         # Gather rewards across processes
         rewards_per_func = self.accelerator.gather(rewards_per_func)
@@ -679,8 +548,8 @@ class OpenVLAGRPOTrainer(Trainer):
         
         # Get only the local slice of advantages
         process_slice = slice(
-            self.accelerator.process_index * len(prompts),
-            (self.accelerator.process_index + 1) * len(prompts),
+            self.accelerator.process_index * len(input_ids),
+            (self.accelerator.process_index + 1) * len(input_ids),
         )
         advantages = advantages[process_slice]
 

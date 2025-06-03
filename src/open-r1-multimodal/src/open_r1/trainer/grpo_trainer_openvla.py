@@ -524,7 +524,7 @@ class OpenVLAGRPOTrainer(Trainer):
         for i, (reward_func, reward_processing_class) in enumerate(
             zip(self.reward_funcs, self.reward_processing_classes)
         ):
-            output_reward_func = reward_func(completion_ids, input["labels"], self.action_tokenizer)
+            output_reward_func = reward_func(completion_ids, inputs["labels"], self.action_tokenizer)
             rewards_per_func[:, i] = torch.tensor(output_reward_func, dtype=torch.float32, device=device)
 
         # Gather rewards across processes

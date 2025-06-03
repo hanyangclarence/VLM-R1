@@ -148,11 +148,10 @@ class OpenVLAGRPOTrainer(Trainer):
         distributed_state = PartialState()
         
         # Register OpenVLA model to HF Auto Classes (not needed if the model is on HF Hub)
-        model_config_class = OpenVLAForActionPrediction.config_class
-        AutoConfig.register("openvla", model_config_class)
-        AutoImageProcessor.register(model_config_class, PrismaticImageProcessor)
-        AutoProcessor.register(model_config_class, PrismaticProcessor)
-        AutoModelForVision2Seq.register(model_config_class, OpenVLAForActionPrediction)
+        AutoConfig.register("openvla", OpenVLAConfig)
+        AutoImageProcessor.register(OpenVLAConfig, PrismaticImageProcessor)
+        AutoProcessor.register(OpenVLAConfig, PrismaticProcessor)
+        AutoModelForVision2Seq.register(OpenVLAConfig, OpenVLAForActionPrediction)
 
         # Load OpenVLA Processor and Model using HF AutoClasses
         processor = AutoProcessor.from_pretrained(vla_args.vla_path, trust_remote_code=True)
@@ -166,6 +165,8 @@ class OpenVLAGRPOTrainer(Trainer):
         
         # Set number of images in VLA input
         vla.vision_backbone.set_num_images_in_input(vla_args.num_images_in_input)
+        
+        self.use_cache = False if args.gradient_checkpointing else args.use_cache
 
         # LoRA setup
         if vla_args.use_lora:
@@ -391,7 +392,8 @@ class OpenVLAGRPOTrainer(Trainer):
     def _enable_gradient_checkpointing(self, model: PreTrainedModel, args: GRPOConfig) -> PreTrainedModel:
         """Enables gradient checkpointing for the model."""
         # Ensure use_cache is disabled
-        model.config.use_cache = False
+        if hasattr(model.config, "use_cache"):
+            model.config.use_cache = False
 
         # Enable gradient checkpointing on the base model for PEFT
         if is_peft_model(model):
@@ -469,6 +471,7 @@ class OpenVLAGRPOTrainer(Trainer):
                 proprio=proprio,
                 proprio_projector=proprio_projector,
                 generation_config=self.generation_config,
+                use_cache=self.use_cache,
             )
             
             prompt_length = input_ids.shape[1]

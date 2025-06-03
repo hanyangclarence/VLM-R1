@@ -851,7 +851,7 @@ def token_accuracy_reward(pred_ids, gt_ids, action_tokenizer, action_dim=7, acti
         assert len(pred_action_ids) == action_dim, f"pred_action_ids should have {action_dim} elements, but got {len(pred_action_ids)}"
         
         reward = 0.0
-        for pos_idx in range(pred_action_ids.shape[0]):
+        for pos_idx in range(action_dim):
             pred_action_id = pred_action_ids[pos_idx]
             gt_action_id = gt_action_ids[pos_idx]
             reward += (pred_action_id == gt_action_id).float() * action_weight_ratio[pos_idx]

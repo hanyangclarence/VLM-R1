@@ -184,8 +184,8 @@ class OpenVLAGRPOTrainer(Trainer):
             proprio_projector = init_module(
                 ProprioProjector,
                 "proprio_projector",
-                vla_args,
-                {"llm_dim": vla.model.llm_dim, "proprio_dim": 8},
+                cfg=vla_args,
+                module_args={"llm_dim": vla.model.llm_dim, "proprio_dim": 8},
                 to_bf16=True,
                 warp_ddp=False
             )

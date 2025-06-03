@@ -97,8 +97,8 @@ def init_module(
     module_class: Type[nn.Module],
     module_name: str,
     cfg,
-    device_id: int,
     module_args: dict,
+    device_id: int = None,
     to_bf16: bool = False,
     find_unused_params: bool = False,
     warp_ddp: bool = True,
@@ -127,9 +127,12 @@ def init_module(
 
     if to_bf16:
         module = module.to(torch.bfloat16)
-    module = module.to(device_id)
+    
+    if device_id is not None:
+        module = module.to(device_id)
 
     if warp_ddp:
+        assert device_id is not None, "Device ID must be specified when wrapping with DDP."
         return wrap_ddp(module, device_id, find_unused_params)
     else:
         return module

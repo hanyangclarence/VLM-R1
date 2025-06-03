@@ -460,7 +460,7 @@ class OpenVLAGRPOTrainer(Trainer):
     def _generate_and_score_completions(self, inputs: dict[str, Union[torch.Tensor, Any]], model) -> dict[str, Union[torch.Tensor, Any]]:
         device = self.accelerator.device
         input_ids, prompt_mask = inputs["input_ids"], inputs["attention_mask"]
-        pixel_values, proprio = inputs["pixel_values"], inputs["proprio"]
+        pixel_values, proprio = inputs["pixel_values"].to(torch.bfloat16), inputs["proprio"].to(torch.bfloat16)
 
         # Generate completions
         with unwrap_model_for_generation(model, self.accelerator) as unwrapped_model:            

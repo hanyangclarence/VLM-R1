@@ -165,7 +165,7 @@ class OpenVLAGRPOTrainer(Trainer):
             vla_args.vla_path,
             torch_dtype=torch_dtype,
             attn_implementation=attn_implementation,
-            low_cpu_mem_usage=True,
+            use_cache=False if args.gradient_checkpointing else True,
             trust_remote_code=True,
         )
         

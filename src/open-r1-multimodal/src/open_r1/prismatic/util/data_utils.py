@@ -92,6 +92,16 @@ class PaddedCollatorForLanguageModeling:
         )
 
 
+def left_pad_sequence(sequences, batch_first=False, padding_value=0):
+    """Pads a list of tensors with left padding."""
+    max_len = max([seq.size(0) for seq in sequences])
+    padded_sequences = [
+        torch.cat([torch.full((max_len - seq.size(0),), padding_value, dtype=seq.dtype), seq])
+        for seq in sequences
+    ]
+    return torch.stack(padded_sequences) if batch_first else torch.stack(padded_sequences).transpose(0, 1)
+
+
 @dataclass
 class PaddedCollatorForActionPrediction:
     model_max_length: int
@@ -110,8 +120,14 @@ class PaddedCollatorForActionPrediction:
         # For now, we only support Tokenizers with `padding_side = "right"` during training
         #   => Handle padding via RNN Utils => `pad_sequence`
         # assert self.padding_side == "right", f"Invalid Tokenizer `{self.padding_side = }`"
-        input_ids = pad_sequence(input_ids, batch_first=True, padding_value=self.pad_token_id, padding_side=self.padding_side)
-        labels = pad_sequence(labels, batch_first=True, padding_value=IGNORE_INDEX, padding_side=self.padding_side)
+        if self.padding_side == "right":
+            input_ids = pad_sequence(input_ids, batch_first=True, padding_value=self.pad_token_id)
+            labels = pad_sequence(labels, batch_first=True, padding_value=IGNORE_INDEX)
+        elif self.padding_side == "left":
+            input_ids = left_pad_sequence(input_ids, batch_first=True, padding_value=self.pad_token_id)
+            labels = left_pad_sequence(labels, batch_first=True, padding_value=IGNORE_INDEX)
+        else:
+            raise ValueError(f"Unsupported `padding_side = {self.padding_side}` for Tokenizer!")
 
         # Truncate (if necessary)
         input_ids, labels = input_ids[:, : self.model_max_length], labels[:, : self.model_max_length]

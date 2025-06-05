@@ -282,6 +282,7 @@ class OpenVLAGRPOTrainer(Trainer):
             resize_resolution=tuple(vla.model.config.image_sizes),
             shuffle_buffer_size=vla_args.shuffle_buffer_size,
             image_aug=vla_args.image_aug,
+            dispatch_batches=False
         )
         val_dataset = RLDSDataset(
             vla_args.data_root_dir,
@@ -291,6 +292,7 @@ class OpenVLAGRPOTrainer(Trainer):
             shuffle_buffer_size=vla_args.shuffle_buffer_size // 10,
             image_aug=vla_args.image_aug,
             train=False,
+            dispatch_batches=False
         )
         
         # [Important] Save dataset statistics so that we can unnormalize actions during inference

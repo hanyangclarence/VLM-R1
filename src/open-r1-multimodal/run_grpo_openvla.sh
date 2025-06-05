@@ -17,9 +17,8 @@ export WANDB_PROJECT=openvla-rl
 export WANDB_ENTITY=mahlerrrr76
 
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-torchrun --nproc_per_node="1" \
-    --nnodes="8" \
-    --node_rank="0" \
+torchrun --standalone --nproc_per_node=8 \
+    --nnodes=1 \
   src/open_r1/grpo_openvla.py \
     --use_vllm False \
     --output_dir ${REPO_HOME}/runs/${EXP_NAME} \

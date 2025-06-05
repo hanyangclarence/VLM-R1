@@ -120,12 +120,11 @@ class PaddedCollatorForActionPrediction:
         # For now, we only support Tokenizers with `padding_side = "right"` during training
         #   => Handle padding via RNN Utils => `pad_sequence`
         # assert self.padding_side == "right", f"Invalid Tokenizer `{self.padding_side = }`"
+        labels = pad_sequence(labels, batch_first=True, padding_value=IGNORE_INDEX)
         if self.padding_side == "right":
             input_ids = pad_sequence(input_ids, batch_first=True, padding_value=self.pad_token_id)
-            labels = pad_sequence(labels, batch_first=True, padding_value=IGNORE_INDEX)
         elif self.padding_side == "left":
             input_ids = left_pad_sequence(input_ids, batch_first=True, padding_value=self.pad_token_id)
-            labels = left_pad_sequence(labels, batch_first=True, padding_value=IGNORE_INDEX)
         else:
             raise ValueError(f"Unsupported `padding_side = {self.padding_side}` for Tokenizer!")
 

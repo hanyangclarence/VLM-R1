@@ -11,14 +11,13 @@ export DEBUG_MODE="true" # Enable Debug if you want to see the rollout of model 
 # create the run directory and log file
 mkdir -p ${REPO_HOME}/runs/${EXP_NAME}
 
-export WANDB_DISABLED=True
+export WANDB_DISABLED=false
 export WANDB_API_KEY=28b3c634497c0dc6c16767729d4719b1012a94f2
 export WANDB_PROJECT=openvla-rl
 export WANDB_ENTITY=mahlerrrr76
 
-# CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6
 torchrun --nproc_per_node="1" \
-    --nnodes="1" \
+    --nnodes="8" \
     --node_rank="0" \
   src/open_r1/grpo_openvla.py \
     --use_vllm False \
@@ -40,7 +39,7 @@ torchrun --nproc_per_node="1" \
     --max_completion_length 200 \
     --reward_funcs token_accuracy openvla_format \
     --beta 0.04 \
-    --report_to tensorboard \
+    --report_to wandb \
     --deepspeed local_scripts/zero2.json \
     --vla_path /gpfs/yanghan/openvla-mini-o1/logs/openvla-7b+rlbencho1+b5+lr-0.0005+lora-r32+dropout-0.0--image_aug--2000_chkpt \
     --resume True \

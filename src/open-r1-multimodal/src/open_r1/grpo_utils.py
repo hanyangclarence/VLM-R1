@@ -837,6 +837,7 @@ def format_reward(completions, **kwargs):
 def token_accuracy_reward(pred_ids, gt_ids, action_tokenizer, action_dim=7, action_weight_ratio=[3, 3, 3, 2, 2, 2, 1]):
     action_weight_ratio = torch.tensor(action_weight_ratio)
     action_weight_ratio = action_weight_ratio / action_weight_ratio.sum()
+    action_weight_ratio = action_weight_ratio.to(pred_ids.device)
     assert action_weight_ratio.shape[0] == action_dim, f"action_weight_ratio should have {action_dim} elements, but got {action_weight_ratio.shape[0]}"
     
     rewards = []
@@ -850,11 +851,7 @@ def token_accuracy_reward(pred_ids, gt_ids, action_tokenizer, action_dim=7, acti
         
         assert len(pred_action_ids) == action_dim, f"pred_action_ids should have {action_dim} elements, but got {len(pred_action_ids)}"
         
-        reward = 0.0
-        for pos_idx in range(action_dim):
-            pred_action_id = pred_action_ids[pos_idx]
-            gt_action_id = gt_action_ids[pos_idx]
-            reward += (pred_action_id == gt_action_id).float() * action_weight_ratio[pos_idx]
+        reward = torch.dot((pred_action_ids == gt_action_ids).float(), action_weight_ratio)
         rewards.append(reward.item())
     return rewards
 

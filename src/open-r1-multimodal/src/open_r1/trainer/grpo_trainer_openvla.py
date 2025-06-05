@@ -347,7 +347,6 @@ class OpenVLAGRPOTrainer(Trainer):
             processing_class=processor,
             callbacks=callbacks,
             optimizers=optimizers,
-            dispatch_batches=False
         )
 
         # Check if the per_device_train/eval_batch_size * num processes can be divided by the number of generations

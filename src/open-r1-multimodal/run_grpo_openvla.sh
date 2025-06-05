@@ -50,6 +50,7 @@ torchrun --standalone --nproc_per_node=8 \
     --num_images_in_input 2 \
     --use_proprio True \
     --image_aug True \
-    --pdb_debug False
+    --pdb_debug False \
+    --dispatch_batches False
 
 echo "Training completed for ${EXP_NAME}"

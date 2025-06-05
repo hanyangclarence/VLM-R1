@@ -40,7 +40,7 @@ torchrun --nproc_per_node="1" \
     --max_completion_length 200 \
     --reward_funcs token_accuracy openvla_format \
     --beta 0.04 \
-    --report_to wandb \
+    --report_to tensorboard \
     --deepspeed local_scripts/zero2.json \
     --vla_path /gpfs/yanghan/openvla-mini-o1/logs/openvla-7b+rlbencho1+b5+lr-0.0005+lora-r32+dropout-0.0--image_aug--2000_chkpt \
     --resume True \

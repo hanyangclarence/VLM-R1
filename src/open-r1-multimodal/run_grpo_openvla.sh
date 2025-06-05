@@ -11,7 +11,7 @@ export DEBUG_MODE="true" # Enable Debug if you want to see the rollout of model 
 # create the run directory and log file
 mkdir -p ${REPO_HOME}/runs/${EXP_NAME}
 
-export WANDB_DISABLED=false
+export WANDB_DISABLED=True
 export WANDB_API_KEY=28b3c634497c0dc6c16767729d4719b1012a94f2
 export WANDB_PROJECT=openvla-rl
 export WANDB_ENTITY=mahlerrrr76
@@ -38,11 +38,13 @@ torchrun --nproc_per_node="1" \
     --save_steps 100 \
     --num_generations 8 \
     --max_completion_length 200 \
-    --reward_funcs token_accuracy \
+    --reward_funcs token_accuracy openvla_format \
     --beta 0.04 \
     --report_to wandb \
     --deepspeed local_scripts/zero2.json \
-    --vla_path openvla/openvla-7b \
+    --vla_path /gpfs/yanghan/openvla-mini-o1/logs/openvla-7b+rlbencho1+b5+lr-0.0005+lora-r32+dropout-0.0--image_aug--2000_chkpt \
+    --resume True \
+    --resume_step 2000 \
     --data_root_dir /gpfs/yanghan/openvla-mini-o1/dataset/rl_bench_o1_dataset/2.0.0 \
     --vla_dataset_name rlbencho1 \
     --lora_rank 32 \

@@ -298,7 +298,7 @@ class OpenVLAGRPOTrainer(Trainer):
             save_dataset_statistics(train_dataset.dataset_statistics, Path(args.output_dir))
         
         collator = PaddedCollatorForActionPrediction(
-            processor.tokenizer.model_max_length, processor.tokenizer.pad_token_id, padding_side="right"
+            processor.tokenizer.model_max_length, processor.tokenizer.pad_token_id, padding_side="left"
         )
 
         # Training arguments

@@ -859,10 +859,38 @@ def token_accuracy_reward(pred_ids, gt_ids, action_tokenizer, action_dim=7, acti
     return rewards
 
 
+def openvla_format_reward(pred_ids, gt_ids, action_tokenizer):
+    responses = action_tokenizer.tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
+    # gts = action_tokenizer.tokenizer.batch_decode(gt_ids, skip_special_tokens=True)
+    
+    rewards = []
+    for response in responses:
+        score = 1.0
+        if "ACTION:" not in response:
+            score = 0.0
+        if "ACTION SUCCESS:" not in response:
+            score = 0.0
+        if "CURRENT GOAL:" in response:
+            judgement = response.split("CURRENT GOAL:")[0].split("ACTION SUCCESS:")[-1].strip()
+            if judgement not in ["True", "False"]:
+                score = 0.0
+        elif "FAILURE REASON:" in response:
+            judgement = response.split("FAILURE REASON:")[0].split("ACTION SUCCESS:")[-1].strip()
+            if judgement not in ["True", "False"]:
+                score = 0.0
+        else:
+            score = 0.0
+        
+        rewards.append(score)
+        
+    return rewards
+
+
 reward_funcs_registry = {
     "accuracy": accuracy_reward,
     "format": format_reward,
     "length": cosine_rewards,
     "repetition": repetition_rewards,
     "token_accuracy": token_accuracy_reward,
+    "openvla_format": openvla_format_reward,
 }

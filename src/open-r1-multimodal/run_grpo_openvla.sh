@@ -41,10 +41,10 @@ torchrun --standalone --nproc_per_node=8 \
     --beta 0.04 \
     --report_to wandb \
     --deepspeed local_scripts/zero2.json \
-    --vla_path /gpfs/yanghan/openvla-mini-o1/logs/openvla-7b+rlbencho1+b5+lr-0.0005+lora-r32+dropout-0.0--image_aug--2000_chkpt \
+    --vla_path /gpfs/yanghan/openvla-mini-o1/logs/openvla-7b+rlbencho1+b5+lr-0.0005+lora-r32+dropout-0.0--warmup--160_chkpt \
     --resume True \
-    --resume_step 2000 \
-    --data_root_dir /gpfs/yanghan/openvla-mini-o1/dataset/rl_bench_o1_dataset/2.0.0 \
+    --resume_step 160 \
+    --data_root_dir /gpfs/yanghan/openvla-mini-o1/dataset/rl_bench_o1_dataset/4.0.0 \
     --vla_dataset_name rlbencho1 \
     --lora_rank 32 \
     --num_images_in_input 2 \

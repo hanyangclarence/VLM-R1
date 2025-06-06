@@ -701,11 +701,11 @@ class VLMGRPOTrainer(Trainer):
         self._metrics["reward_std"].append(self.accelerator.gather_for_metrics(std_grouped_rewards).mean().item())
         
         mean_values = 0.0
-        for name, param in model.named_parameters():
+        for name, param in model.base_model.named_parameters():
             if param.requires_grad:
                 mean_values += param.abs().mean()
-        
-        print(f"!! Mean absolute value of trainable parameters: {mean_values.item(): .8f}")
+        if self.accelerator.is_main_process:
+            print(f"!! Mean absolute value of trainable parameters: {mean_values.item(): .8f}")
 
         return {
             "prompt_ids": prompt_ids,

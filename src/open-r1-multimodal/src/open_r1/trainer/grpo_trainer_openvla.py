@@ -237,8 +237,7 @@ class OpenVLAGRPOTrainer(Trainer):
             self.ref_model = None
         else:
             # If PEFT configuration is not provided, create a reference model based on the initial model.
-            assert False, f"Not implemented yet"
-            self.ref_model = create_reference_model(model)
+            self.ref_model = create_reference_model(vla)
         
         pad_token_id = processor.tokenizer.pad_token_id
         processor.pad_token_id = pad_token_id

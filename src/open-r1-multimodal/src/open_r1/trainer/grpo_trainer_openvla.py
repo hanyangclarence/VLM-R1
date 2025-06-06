@@ -449,9 +449,6 @@ class OpenVLAGRPOTrainer(Trainer):
                         model.vision_backbone.fused_featurizer.set_grad_checkpointing(True)
                 else:
                     raise ValueError(f"The fused featurizer {model.vision_backbone.fused_featurizer.__class__.__name__} does not support gradient checkpointing.")
-            
-            # Mark the model as having gradient checkpointing enabled (important for use_reentrant logic)
-            model.is_gradient_checkpointing = True 
 
             # This line is to prevent the Trainer from trying to enable it again using a generic method,
             # as we've handled it specifically for OpenVLA.

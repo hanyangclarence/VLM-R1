@@ -2,6 +2,7 @@ from transformers import AutoProcessor
 from typing import Dict, Any, Union
 from trl.data_utils import maybe_apply_chat_template
 import torch
+from transformers import Qwen2VLForConditionalGeneration, Qwen2_5_VLForConditionalGeneration
 
 from open_r1.vlm_modules.vlm_module import VLMBaseModule
 

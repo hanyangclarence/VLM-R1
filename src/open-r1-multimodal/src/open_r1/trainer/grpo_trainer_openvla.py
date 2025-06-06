@@ -411,16 +411,51 @@ class OpenVLAGRPOTrainer(Trainer):
             model.base_model.gradient_checkpointing_enable()
         # Enable gradient checkpointing for non-PEFT models
         else:
-            if getattr(model, "language_model", None) is not None:
-                # For InternVL; these operations are copied from the original training script of InternVL
+            # if getattr(model, "language_model", None) is not None:
+            #     # For InternVL; these operations are copied from the original training script of InternVL
+            #     model.language_model.config.use_cache = False
+            #     model.vision_model.gradient_checkpointing = True
+            #     model.vision_model.encoder.gradient_checkpointing = True
+            #     model.language_model._set_gradient_checkpointing()
+            #     # This line is necessary, otherwise the `model.gradient_checkpointing_enable()` will be executed during the training process, leading to an error since InternVL does not support this operation.
+            #     args.gradient_checkpointing = False
+            # else:
+            #     model.gradient_checkpointing_enable()
+            
+            assert isinstance(model, OpenVLAForActionPrediction), "Only OpenVLAForActionPrediction supports gradient checkpointing"
+            
+            if hasattr(model.language_model.config, "use_cache"):
                 model.language_model.config.use_cache = False
-                model.vision_model.gradient_checkpointing = True
-                model.vision_model.encoder.gradient_checkpointing = True
-                model.language_model._set_gradient_checkpointing()
-                # This line is necessary, otherwise the `model.gradient_checkpointing_enable()` will be executed during the training process, leading to an error since InternVL does not support this operation.
-                args.gradient_checkpointing = False
+            if hasattr(model.language_model, "_set_gradient_checkpointing"):
+                model.language_model._set_gradient_checkpointing(True)
+            elif hasattr(model.language_model, "gradient_checkpointing_enable"):
+                model.language_model.gradient_checkpointing_enable()
             else:
-                model.gradient_checkpointing_enable()
+                raise ValueError(f"The model {model.__class__.__name__} does not support gradient checkpointing.")
+            
+            if hasattr(model.vision_backbone.featurizer, "grad_checkpointing"):
+                model.vision_backbone.featurizer.grad_checkpointing = True
+            # Some timm models might use a setter method
+            elif hasattr(model.vision_backbone.featurizer, "set_grad_checkpointing"):
+                model.vision_backbone.featurizer.set_grad_checkpointing(True)
+            else:
+                raise ValueError(f"The vision backbone {model.vision_backbone.featurizer.__class__.__name__} does not support gradient checkpointing.")
+            
+            # For the fused featurizer, if it exists
+            if hasattr(model.vision_backbone, "fused_featurizer") and model.vision_backbone.fused_featurizer is not None:
+                if hasattr(model.vision_backbone.fused_featurizer, "grad_checkpointing"):
+                    model.vision_backbone.fused_featurizer.grad_checkpointing = True
+                elif hasattr(model.vision_backbone.fused_featurizer, "set_grad_checkpointing"):
+                        model.vision_backbone.fused_featurizer.set_grad_checkpointing(True)
+                else:
+                    raise ValueError(f"The fused featurizer {model.vision_backbone.fused_featurizer.__class__.__name__} does not support gradient checkpointing.")
+            
+            # Mark the model as having gradient checkpointing enabled (important for use_reentrant logic)
+            model.is_gradient_checkpointing = True 
+
+            # This line is to prevent the Trainer from trying to enable it again using a generic method,
+            # as we've handled it specifically for OpenVLA.
+            args.gradient_checkpointing = False
 
         gradient_checkpointing_kwargs = args.gradient_checkpointing_kwargs or {}
         use_reentrant = (

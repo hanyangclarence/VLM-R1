@@ -705,7 +705,7 @@ class VLMGRPOTrainer(Trainer):
             if param.requires_grad:
                 mean_values += param.abs().mean()
         if self.accelerator.is_main_process:
-            print(f"!! Mean absolute value of trainable parameters: {mean_values.item(): .8f}")
+            print(f"!! Mean absolute value of trainable parameters: {mean_values.item(): .16f}")
 
         return {
             "prompt_ids": prompt_ids,

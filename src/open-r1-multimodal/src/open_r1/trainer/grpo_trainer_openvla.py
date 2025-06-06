@@ -180,6 +180,10 @@ class OpenVLAGRPOTrainer(Trainer):
             )
             vla = get_peft_model(vla, lora_config)
             vla.print_trainable_parameters()
+            
+            model_ref = vla.model
+        else:
+            model_ref = vla
 
         # If applicable, instantiate proprio projector
         if vla_args.use_proprio:
@@ -187,14 +191,14 @@ class OpenVLAGRPOTrainer(Trainer):
                 ProprioProjector,
                 "proprio_projector",
                 cfg=vla_args,
-                module_args={"llm_dim": vla.model.llm_dim, "proprio_dim": 8},
+                module_args={"llm_dim": model_ref.llm_dim, "proprio_dim": 8},
                 to_bf16=True,
                 warp_ddp=False
             )
-            vla.model.proprio_projector = proprio_projector
+            model_ref.proprio_projector = proprio_projector
         
         # Get number of vision patches
-        NUM_PATCHES = vla.model.vision_backbone.get_num_patches() * vla.model.vision_backbone.get_num_images_in_input()
+        NUM_PATCHES = model_ref.vision_backbone.get_num_patches() * model_ref.vision_backbone.get_num_images_in_input()
         # If we have proprio inputs, a single proprio embedding is appended to the end of the vision patch embeddings
         if vla_args.use_proprio:
             NUM_PATCHES += 1
@@ -203,6 +207,12 @@ class OpenVLAGRPOTrainer(Trainer):
         
         # Create Action Tokenizer
         self.action_tokenizer = ActionTokenizer(processor.tokenizer)
+        
+        # Compute the number of trainable parameters and print the parameter that is trainable
+        trainable_params = [p for p in model_ref.parameters() if p.requires_grad]
+        total_trainable_params = sum(p.numel() for p in trainable_params)
+        total_params = sum(p.numel() for p in model_ref.parameters())
+        print(f"Total trainable parameters: {total_trainable_params:,} out of {total_params:,} in the model.")
 
         # Enable gradient checkpointing if requested
         # TODO: check whether this part is implemented
@@ -279,7 +289,7 @@ class OpenVLAGRPOTrainer(Trainer):
             vla_args.data_root_dir,
             vla_args.vla_dataset_name,
             batch_transform,
-            resize_resolution=tuple(vla.model.config.image_sizes),
+            resize_resolution=tuple(model_ref.config.image_sizes),
             shuffle_buffer_size=vla_args.shuffle_buffer_size,
             image_aug=vla_args.image_aug,
         )
@@ -287,7 +297,7 @@ class OpenVLAGRPOTrainer(Trainer):
             vla_args.data_root_dir,
             vla_args.vla_dataset_name,
             batch_transform,
-            resize_resolution=tuple(vla.model.config.image_sizes),
+            resize_resolution=tuple(model_ref.config.image_sizes),
             shuffle_buffer_size=vla_args.shuffle_buffer_size // 10,
             image_aug=vla_args.image_aug,
             train=False,

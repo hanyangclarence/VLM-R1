@@ -640,7 +640,7 @@ class OpenVLAGRPOTrainer(Trainer):
         for name, param in model.base_model.named_parameters():
             if param.requires_grad:
                 mean_values += param.abs().mean()
-        self._metrics["mean_trainable_param_value"].append(self.accelerator.gather_for_metrics(mean_values).item())
+        self._metrics["mean_trainable_param_value"].append(self.accelerator.gather_for_metrics(mean_values).mean().item())
 
         return loss
 

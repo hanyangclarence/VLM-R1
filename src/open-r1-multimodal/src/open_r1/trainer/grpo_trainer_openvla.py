@@ -634,6 +634,13 @@ class OpenVLAGRPOTrainer(Trainer):
         is_clipped = (per_token_loss1 < per_token_loss2).float()
         clip_ratio = (is_clipped * completion_mask).sum() / completion_mask.sum()
         self._metrics["clip_ratio"].append(self.accelerator.gather_for_metrics(clip_ratio).mean().item())
+        
+        # Log the value of trainable parameters to see whether the weights are updated
+        mean_values = 0.0
+        for name, param in model.base_model.named_parameters():
+            if param.requires_grad:
+                mean_values += param.abs().mean().item()
+        self._metrics["mean_trainable_param_value"].append(self.accelerator.gather_for_metrics(mean_values).mean().item())
 
         return loss
 

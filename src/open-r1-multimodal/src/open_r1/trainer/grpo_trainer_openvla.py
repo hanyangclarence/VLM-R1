@@ -506,15 +506,45 @@ class OpenVLAGRPOTrainer(Trainer):
         # Generate completions
         with unwrap_model_for_generation(model, self.accelerator) as unwrapped_model:            
             proprio_projector = unwrapped_model.proprio_projector
-            generated_ids = unwrapped_model.generate(
-                input_ids=input_ids,
-                attention_mask=prompt_mask,
-                pixel_values=pixel_values,
-                proprio=proprio,
-                proprio_projector=proprio_projector,
-                generation_config=self.generation_config,
-                use_cache=self.use_cache,
+            # generated_ids = unwrapped_model.generate(
+            #     input_ids=input_ids,
+            #     attention_mask=prompt_mask,
+            #     pixel_values=pixel_values,
+            #     proprio=proprio,
+            #     proprio_projector=proprio_projector,
+            #     generation_config=self.generation_config,
+            #     use_cache=self.use_cache,
+            # )
+            
+            # use loop to iterate each item in the batch
+            all_generated_ids = []
+            for batch_i in range(input_ids.shape[0]):
+                input_ids_i = input_ids[batch_i:batch_i + 1]
+                prompt_mask_i = prompt_mask[batch_i:batch_i + 1]
+                # remove the paddings
+                pad_length = prompt_mask_i.shape[-1] - prompt_mask_i.sum().item()
+                input_ids_i = input_ids_i[:, pad_length:]
+                prompt_mask_i = prompt_mask_i[:, pad_length:]
+                generated_id = unwrapped_model.generate(
+                    input_ids=input_ids_i,
+                    attention_mask=prompt_mask_i,
+                    pixel_values=pixel_values[batch_i:batch_i + 1],
+                    proprio=proprio[batch_i:batch_i + 1],
+                    proprio_projector=proprio_projector,
+                    generation_config=self.generation_config,
+                    use_cache=self.use_cache,
+                )
+                all_generated_ids.append(generated_id)
+            max_gen_length = max(generated_id.shape[1] for generated_id in all_generated_ids)
+            # Pad the generated_ids to the max_gen_length
+            generated_ids = torch.full(
+                (len(all_generated_ids), max_gen_length),
+                fill_value=self.processing_class.pad_token_id,
+                dtype=torch.long,
+                device=device,
             )
+            for i, generated_id in enumerate(all_generated_ids):
+                generated_ids[i, :generated_id.shape[1]] = generated_id
             
             prompt_length = input_ids.shape[1]
             prompt_completion_ids = generated_ids

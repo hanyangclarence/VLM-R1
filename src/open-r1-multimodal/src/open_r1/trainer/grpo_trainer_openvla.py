@@ -75,13 +75,16 @@ from open_r1.vlm_modules.vlm_module import VLMBaseModule
 RewardFunc = Union[str, PreTrainedModel, Callable[[list, list], list[float]]]
 
 
-def remove_prompt_logps(per_token_logps: torch.Tensor, prompt_lengths: torch.Tensor, prompt_completion_ids: torch.Tensor, eos_token_id: int):
+def remove_prompt_logps(
+    per_token_logps: torch.Tensor, prompt_lengths: torch.Tensor, completion_lengths: torch.Tensor,
+    prompt_completion_ids: torch.Tensor, pad_token_id: int
+):
     all_per_token_logps = []
     for i in range(per_token_logps.shape[0]):
         all_per_token_logps.append(
-            per_token_logps[i, prompt_lengths[i] - 1 :]
+            per_token_logps[i, prompt_lengths[i] - 1 : prompt_lengths[i] - 1 + completion_lengths[i]]
         )
-    pad_value = per_token_logps[prompt_completion_ids[:, 1:] == eos_token_id].mean().item()
+    pad_value = per_token_logps[prompt_completion_ids[:, 1:] == pad_token_id].mean().item()
     all_per_token_logps = torch.nn.utils.rnn.pad_sequence(all_per_token_logps, batch_first=True, padding_value=pad_value)
     return all_per_token_logps
 
@@ -587,7 +590,7 @@ class OpenVLAGRPOTrainer(Trainer):
                 )
                 # old_per_token_logps = old_per_token_logps[:, prompt_length - 1:]
                 old_per_token_logps = remove_prompt_logps(
-                    old_per_token_logps, prompt_lengths, prompt_completion_ids, self.processing_class.eos_token_id
+                    old_per_token_logps, prompt_lengths, prompt_completion_ids, self.processing_class.pad_token_id
                 )
             else:
                 old_per_token_logps = None
@@ -606,7 +609,7 @@ class OpenVLAGRPOTrainer(Trainer):
         if ref_per_token_logps is not None:
             # ref_per_token_logps = ref_per_token_logps[:, prompt_length - 1:]
             ref_per_token_logps = remove_prompt_logps(
-                ref_per_token_logps, prompt_lengths, prompt_completion_ids, self.processing_class.eos_token_id
+                ref_per_token_logps, prompt_lengths, prompt_completion_ids, self.processing_class.pad_token_id
             )
 
         # Compute the rewards
@@ -700,7 +703,7 @@ class OpenVLAGRPOTrainer(Trainer):
         # Get rid of the prompt (-1 because of the shift done in get_per_token_logps)
         # per_token_logps = per_token_logps[:, prompt_ids.size(1) - 1:]
         per_token_logps = remove_prompt_logps(
-            per_token_logps, prompt_lengths, input_ids, self.processing_class.eos_token_id
+            per_token_logps, prompt_lengths, input_ids, self.processing_class.pad_token_id
         )
 
         # Get the advantages from inputs

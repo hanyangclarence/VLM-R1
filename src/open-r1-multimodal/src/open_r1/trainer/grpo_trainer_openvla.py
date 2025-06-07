@@ -590,7 +590,8 @@ class OpenVLAGRPOTrainer(Trainer):
                 )
                 # old_per_token_logps = old_per_token_logps[:, prompt_length - 1:]
                 old_per_token_logps = remove_prompt_logps(
-                    old_per_token_logps, prompt_lengths, prompt_completion_ids, self.processing_class.pad_token_id
+                    old_per_token_logps, prompt_lengths, completion_lengths, 
+                    prompt_completion_ids, self.processing_class.pad_token_id
                 )
             else:
                 old_per_token_logps = None
@@ -609,7 +610,8 @@ class OpenVLAGRPOTrainer(Trainer):
         if ref_per_token_logps is not None:
             # ref_per_token_logps = ref_per_token_logps[:, prompt_length - 1:]
             ref_per_token_logps = remove_prompt_logps(
-                ref_per_token_logps, prompt_lengths, prompt_completion_ids, self.processing_class.pad_token_id
+                ref_per_token_logps, prompt_lengths, completion_lengths, 
+                prompt_completion_ids, self.processing_class.pad_token_id
             )
 
         # Compute the rewards
@@ -667,6 +669,7 @@ class OpenVLAGRPOTrainer(Trainer):
             "attention_mask": attention_mask,
             "prompt_lenghts": prompt_lengths,
             "completion_mask": completion_mask,
+            "completion_lengths": completion_lengths,
             "old_per_token_logps": old_per_token_logps,
             "ref_per_token_logps": ref_per_token_logps,
             "advantages": advantages,
@@ -692,6 +695,7 @@ class OpenVLAGRPOTrainer(Trainer):
         attention_mask = inputs["attention_mask"]
         prompt_lengths = inputs["prompt_lenghts"]
         completion_mask = inputs["completion_mask"]
+        completion_lengths = inputs["completion_lengths"]
         multimodal_inputs = inputs["multimodal_inputs"]
         
         # # Concatenate for full sequence
@@ -703,7 +707,8 @@ class OpenVLAGRPOTrainer(Trainer):
         # Get rid of the prompt (-1 because of the shift done in get_per_token_logps)
         # per_token_logps = per_token_logps[:, prompt_ids.size(1) - 1:]
         per_token_logps = remove_prompt_logps(
-            per_token_logps, prompt_lengths, input_ids, self.processing_class.pad_token_id
+            per_token_logps, prompt_lengths, completion_lengths, 
+            input_ids, self.processing_class.pad_token_id
         )
 
         # Get the advantages from inputs

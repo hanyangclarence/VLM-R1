@@ -776,7 +776,27 @@ class OpenVLAGRPOTrainer(Trainer):
         dataset_stat_path = os.path.join(self.vla_args.vla_path, "dataset_statistics.json")
         if os.path.exists(dataset_stat_path):
             os.system(f"cp {dataset_stat_path} {output_dir}")
-                
+            
+        # for safety, do our own save_model
+        customized_folder = os.path.join(output_dir, "customized")
+        os.makedirs(customized_folder, exist_ok=True)
+        
+        adapter_dir = os.path.join(customized_folder, "adapter")
+        os.makedirs(adapter_dir, exist_ok=True)
+        self.processing_class.save_pretrained(customized_folder)
+        unwrapped_model.save_pretrained(adapter_dir)
+        torch.save(
+            proprio_projector.state_dict(),
+            os.path.join(customized_folder, "proprio_projector--checkpoint.pt")
+        )
+        
+        base_vla = OpenVLAForActionPrediction.from_pretrained(
+            self.vla_args.vla_path,
+            torch_dtype=torch.bfloat16, low_cpu_mem_usage=True, trust_remote_code=True
+        )
+        merged_vla = PeftModel.from_pretrained(base_vla, adapter_dir)
+        merged_vla = merged_vla.merge_and_unload()
+        merged_vla.save_pretrained(customized_folder)
 
     def log(self, logs: dict[str, float], start_time: Optional[float] = None) -> None:
         metrics = {key: sum(val) / len(val) for key, val in self._metrics.items()}  # average the metrics

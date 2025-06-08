@@ -155,6 +155,7 @@ class OpenVLAGRPOTrainer(Trainer):
         # Args
         if args is None:
             args = GRPOConfig(f"{vla_path}-GRPO")
+        self.vla_args = vla_args
         
         # Trim trailing forward slash ('/') in VLA path if it exists
         print(f"Fine-tuning OpenVLA Model `{vla_args.vla_path}` on `{vla_args.vla_dataset_name}`")
@@ -759,6 +760,7 @@ class OpenVLAGRPOTrainer(Trainer):
         run_dir = self._get_output_dir(trial=trial)
         output_dir = os.path.join(run_dir, checkpoint_folder)
         
+        # save proprio projector
         assert self.is_deepspeed_enabled, "Checkpoint saving is only supported with DeepSpeed enabled."
         unwrapped_model = self.accelerator.unwrap_model(self.deepspeed)
         
@@ -768,6 +770,11 @@ class OpenVLAGRPOTrainer(Trainer):
                 proprio_projector.state_dict(),
                 os.path.join(output_dir, "proprio_projector--checkpoint.pt")
             )
+        
+        # save dataset statistics
+        dataset_stat_path = os.path.join(self.vla_args.vla_path, "dataset_statistics.json")
+        if os.path.exists(dataset_stat_path):
+            os.system(f"cp {dataset_stat_path} {output_dir}")
                 
 
     def log(self, logs: dict[str, float], start_time: Optional[float] = None) -> None:

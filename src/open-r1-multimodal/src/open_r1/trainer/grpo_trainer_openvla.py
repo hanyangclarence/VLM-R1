@@ -748,6 +748,12 @@ class OpenVLAGRPOTrainer(Trainer):
         with torch.no_grad():
             mean_values = 0.0
             for name, param in self.accelerator.get_state_dict(self.deepspeed).items():
+                if "lora" in name:
+                    mean_values += param.abs().mean()
+            self._metrics["mean_trainable_param_value_lora"].append(self.accelerator.gather_for_metrics(mean_values).mean().item())
+            
+            mean_values = 0.0
+            for param in self.deepspeed.parameters():
                 if param.requires_grad:
                     mean_values += param.abs().mean()
             self._metrics["mean_trainable_param_value"].append(self.accelerator.gather_for_metrics(mean_values).mean().item())

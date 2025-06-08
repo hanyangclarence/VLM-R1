@@ -766,7 +766,7 @@ class OpenVLAGRPOTrainer(Trainer):
         if proprio_projector is not None:
             torch.save(
                 proprio_projector.state_dict(),
-                os.path.join(output_dir, "proprio_projector.pt")
+                os.path.join(output_dir, "proprio_projector--checkpoint.pt")
             )
                 
 

@@ -752,6 +752,21 @@ class OpenVLAGRPOTrainer(Trainer):
 
         return loss
 
+    def _save_checkpoint(self, model, trial, metrics=None):
+        super()._save_checkpoint(model, trial, metrics)
+        
+        checkpoint_folder = f"checkpoint-{self.state.global_step}"
+        run_dir = self._get_output_dir(trial=trial)
+        output_dir = os.path.join(run_dir, checkpoint_folder)
+        
+        proprio_projector = model.proprio_projector if hasattr(model, "proprio_projector") else None
+        if proprio_projector is not None:
+            torch.save(
+                proprio_projector.state_dict(),
+                os.path.join(output_dir, "proprio_projector.pt")
+            )
+                
+
     def log(self, logs: dict[str, float], start_time: Optional[float] = None) -> None:
         metrics = {key: sum(val) / len(val) for key, val in self._metrics.items()}  # average the metrics
         logs = {**logs, **metrics}

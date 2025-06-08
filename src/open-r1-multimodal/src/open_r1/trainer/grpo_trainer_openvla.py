@@ -762,7 +762,7 @@ class OpenVLAGRPOTrainer(Trainer):
         assert self.is_deepspeed_enabled, "Checkpoint saving is only supported with DeepSpeed enabled."
         unwrapped_model = self.accelerator.unwrap_model(self.deepspeed)
         
-        proprio_projector = unwrapped_model.proprio_projector if hasattr(model, "proprio_projector") else None
+        proprio_projector = unwrapped_model.proprio_projector if hasattr(unwrapped_model, "proprio_projector") else None
         if proprio_projector is not None:
             torch.save(
                 proprio_projector.state_dict(),

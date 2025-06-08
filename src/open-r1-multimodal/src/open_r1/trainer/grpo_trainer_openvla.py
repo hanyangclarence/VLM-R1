@@ -752,9 +752,10 @@ class OpenVLAGRPOTrainer(Trainer):
 
         return loss
 
-    def _save_checkpoint(self, model, trial, metrics=None):
-        super()._save_checkpoint(model, trial, metrics)
+    def _save_checkpoint(self, model, **kwargs):
+        super()._save_checkpoint(model, **kwargs)
         
+        trial = kwargs.get("trial", None)
         checkpoint_folder = f"checkpoint-{self.state.global_step}"
         run_dir = self._get_output_dir(trial=trial)
         output_dir = os.path.join(run_dir, checkpoint_folder)

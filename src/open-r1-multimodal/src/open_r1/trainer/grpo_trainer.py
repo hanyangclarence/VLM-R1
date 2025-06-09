@@ -110,6 +110,7 @@ class RepeatRandomSampler(Sampler):
             for _ in range(self.repeat_count):
                 for index in chunk:
                     for _ in range(self.mini_repeat_count):
+                        print(f"?? {index}")
                         yield index
 
     def __len__(self) -> int:

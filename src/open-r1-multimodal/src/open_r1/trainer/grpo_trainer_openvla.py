@@ -747,6 +747,16 @@ class OpenVLAGRPOTrainer(Trainer):
         merged_vla = merged_vla.merge_and_unload()
         merged_vla.save_pretrained(customized_folder)
 
+    def _load_from_checkpoint(self, resume_from_checkpoint, model=None):
+        if model is None:
+            model = self.model
+        super()._load_from_checkpoint(resume_from_checkpoint, model)
+        
+        proprio_projector_path = os.path.join(resume_from_checkpoint, "proprio_projector--checkpoint.pt")
+        print(f"Loading proprio projector from {proprio_projector_path}")
+        state_dict = torch.load(proprio_projector_path, map_location=self.accelerator.device)
+        model.proprio_projector.load_state_dict(state_dict)
+            
     def log(self, logs: dict[str, float], start_time: Optional[float] = None) -> None:
         metrics = {key: sum(val) / len(val) for key, val in self._metrics.items()}  # average the metrics
         logs = {**logs, **metrics}

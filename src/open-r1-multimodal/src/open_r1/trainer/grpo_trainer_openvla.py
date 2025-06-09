@@ -133,6 +133,7 @@ class RepeatRandomSampler(Sampler):
             for _ in range(self.repeat_count):
                 for index in chunk:
                     for _ in range(self.mini_repeat_count):
+                        print(f"?? {index}")
                         yield index
 
     def __len__(self) -> int:
@@ -880,6 +881,8 @@ class OpenVLAGRPOTrainer(Trainer):
             * self.accelerator.num_processes
             * self.args.gradient_accumulation_steps
         )
+        
+        print(f"!!!! RepeatedRandomSampler !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
         
         return RepeatRandomSampler(
             data_source=self.train_dataset,

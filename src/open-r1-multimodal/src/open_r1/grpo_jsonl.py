@@ -1053,10 +1053,10 @@ def main(script_args, training_args, model_args):
     )
 
     # Train and push the model to the Hub
-    if list(pathlib.Path(training_args.output_dir).glob("checkpoint-*")):
-        trainer.train(resume_from_checkpoint=True)
-    else:
-        trainer.train()
+    # if list(pathlib.Path(training_args.output_dir).glob("checkpoint-*")):
+    #     trainer.train(resume_from_checkpoint=True)
+    # else:
+    trainer.train()
 
     # Save and push to hub
     trainer.save_model(training_args.output_dir)

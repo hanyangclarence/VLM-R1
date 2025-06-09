@@ -129,9 +129,11 @@ class RLDSDataset(IterableDataset):
         future_action_window_size: int = 0,
         image_window_size: int = 1,
         load_camera_views: tuple = ("primary",),
+        num_generation: int = 1,
     ) -> None:
         """Lightweight wrapper around RLDS TFDS Pipeline for use with PyTorch/OpenVLA Data Loaders."""
         self.data_root_dir, self.data_mix, self.batch_transform = data_root_dir, data_mix, batch_transform
+        self.num_generation = num_generation
 
         # Configure RLDS Dataset(s)
         if self.data_mix in OXE_NAMED_MIXTURES:
@@ -205,7 +207,7 @@ class RLDSDataset(IterableDataset):
                 rlds_batch = next(iterator)
                 # yield self.batch_transform(rlds_batch)
                 transformed_batch = self.batch_transform(rlds_batch)
-                for _ in range(8):
+                for _ in range(self.num_generation):
                     yield transformed_batch
                 
             except tf.errors.InvalidArgumentError as e:

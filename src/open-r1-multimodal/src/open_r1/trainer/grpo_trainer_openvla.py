@@ -75,20 +75,6 @@ from open_r1.vlm_modules.vlm_module import VLMBaseModule
 RewardFunc = Union[str, PreTrainedModel, Callable[[list, list], list[float]]]
 
 
-def remove_prompt_logps(
-    per_token_logps: torch.Tensor, prompt_lengths: torch.Tensor, completion_lengths: torch.Tensor,
-    prompt_completion_ids: torch.Tensor, pad_token_id: int
-):
-    all_per_token_logps = []
-    for i in range(per_token_logps.shape[0]):
-        all_per_token_logps.append(
-            per_token_logps[i, prompt_lengths[i] - 1 : prompt_lengths[i] - 1 + completion_lengths[i]]
-        )
-    pad_value = per_token_logps[prompt_completion_ids[:, 1:] == pad_token_id].mean().item()
-    all_per_token_logps = torch.nn.utils.rnn.pad_sequence(all_per_token_logps, batch_first=True, padding_value=pad_value)
-    return all_per_token_logps
-
-
 class RepeatRandomSampler(Sampler):
     """
     Sampler that repeats the indices of a dataset in a structured manner.
@@ -133,7 +119,6 @@ class RepeatRandomSampler(Sampler):
             for _ in range(self.repeat_count):
                 for index in chunk:
                     for _ in range(self.mini_repeat_count):
-                        print(f"?? {index}")
                         yield index
 
     def __len__(self) -> int:
@@ -307,6 +292,7 @@ class OpenVLAGRPOTrainer(Trainer):
             resize_resolution=tuple(model_ref.config.image_sizes),
             shuffle_buffer_size=vla_args.shuffle_buffer_size,
             image_aug=vla_args.image_aug,
+            num_generation=args.num_generations,
         )
         val_dataset = RLDSDataset(
             vla_args.data_root_dir,
@@ -316,6 +302,7 @@ class OpenVLAGRPOTrainer(Trainer):
             shuffle_buffer_size=vla_args.shuffle_buffer_size // 10,
             image_aug=vla_args.image_aug,
             train=False,
+            num_generation=args.num_generations,
         )
         
         # [Important] Save dataset statistics so that we can unnormalize actions during inference
@@ -522,64 +509,30 @@ class OpenVLAGRPOTrainer(Trainer):
         # Generate completions
         with unwrap_model_for_generation(model, self.accelerator) as unwrapped_model:            
             proprio_projector = unwrapped_model.proprio_projector
-            # generated_ids = unwrapped_model.generate(
-            #     input_ids=input_ids,
-            #     attention_mask=prompt_mask,
-            #     pixel_values=pixel_values,
-            #     proprio=proprio,
-            #     proprio_projector=proprio_projector,
-            #     generation_config=self.generation_config,
-            #     use_cache=self.use_cache,
-            # )
-            
-            # use loop to iterate each item in the batch
-            all_generated_ids = []
-            prompt_lengths = prompt_mask.sum(dim=1)
-            completion_lengths = []
-            for batch_i in range(input_ids.shape[0]):
-                input_ids_i = input_ids[batch_i:batch_i + 1]
-                prompt_mask_i = prompt_mask[batch_i:batch_i + 1]
-                # remove the paddings
-                pad_length = prompt_mask_i.shape[-1] - prompt_mask_i.sum().item()
-                input_ids_i = input_ids_i[:, pad_length:]
-                prompt_mask_i = prompt_mask_i[:, pad_length:]
-                generated_id = unwrapped_model.generate(
-                    input_ids=input_ids_i,
-                    attention_mask=prompt_mask_i,
-                    pixel_values=pixel_values[batch_i:batch_i + 1],
-                    proprio=proprio[batch_i:batch_i + 1],
-                    proprio_projector=proprio_projector,
-                    generation_config=self.generation_config,
-                    use_cache=self.use_cache,
-                )
-                all_generated_ids.append(generated_id)
-                completion_lengths.append(generated_id.shape[1] - input_ids_i.shape[1])
-            max_gen_length = max(generated_id.shape[1] for generated_id in all_generated_ids)
-            # Pad the generated_ids to the max_gen_length
-            prompt_completion_ids = torch.full(
-                (len(all_generated_ids), max_gen_length),
-                fill_value=self.processing_class.pad_token_id,
-                dtype=torch.long,
-                device=device,
+            generated_ids = unwrapped_model.generate(
+                input_ids=input_ids,
+                attention_mask=prompt_mask,
+                pixel_values=pixel_values,
+                proprio=proprio,
+                proprio_projector=proprio_projector,
+                generation_config=self.generation_config,
+                use_cache=self.use_cache,
             )
-            for i, generated_id in enumerate(all_generated_ids):
-                prompt_completion_ids[i, :generated_id.shape[1]] = generated_id
+            
+            prompt_length = input_ids.shape[1]
+            prompt_completion_ids = generated_ids
+            prompt_ids = prompt_completion_ids[:, :prompt_length]
+            completion_ids = prompt_completion_ids[:, prompt_length:]
 
         # Mask everything after the first EOS token
-        is_eos = prompt_completion_ids == self.processing_class.eos_token_id
+        is_eos = completion_ids == self.processing_class.eos_token_id
         eos_idx = torch.full((is_eos.size(0),), is_eos.size(1), dtype=torch.long, device=device)
         eos_idx[is_eos.any(dim=1)] = is_eos.int().argmax(dim=1)[is_eos.any(dim=1)]
         sequence_indices = torch.arange(is_eos.size(1), device=device).expand(is_eos.size(0), -1)
-        attention_mask = (sequence_indices <= eos_idx.unsqueeze(1)).int()
-        
-        # get the completion mask
-        completion_mask = torch.zeros(
-            (len(completion_lengths), max(completion_lengths)),
-            dtype=torch.long,
-            device=device
-        )
-        for i, completion_length in enumerate(completion_lengths):
-            completion_mask[i, :completion_length] = 1
+        completion_mask = (sequence_indices <= eos_idx.unsqueeze(1)).int()
+
+        # Concatenate prompt_mask with completion_mask for logit computation
+        attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)  # (B, P+C)
 
         # Get the multimodal inputs
         multimodal_inputs = {"pixel_values": pixel_values, "proprio": proprio, "proprio_projector": proprio_projector}
@@ -590,11 +543,7 @@ class OpenVLAGRPOTrainer(Trainer):
                 old_per_token_logps = self._get_per_token_logps(
                     model, prompt_completion_ids, attention_mask, **multimodal_inputs
                 )
-                # old_per_token_logps = old_per_token_logps[:, prompt_length - 1:]
-                old_per_token_logps = remove_prompt_logps(
-                    old_per_token_logps, prompt_lengths, completion_lengths, 
-                    prompt_completion_ids, self.processing_class.pad_token_id
-                )
+                old_per_token_logps = old_per_token_logps[:, prompt_length - 1:]
             else:
                 old_per_token_logps = None
 
@@ -610,11 +559,7 @@ class OpenVLAGRPOTrainer(Trainer):
                         model, prompt_completion_ids, attention_mask, **multimodal_inputs
                     )
         if ref_per_token_logps is not None:
-            # ref_per_token_logps = ref_per_token_logps[:, prompt_length - 1:]
-            ref_per_token_logps = remove_prompt_logps(
-                ref_per_token_logps, prompt_lengths, completion_lengths, 
-                prompt_completion_ids, self.processing_class.pad_token_id
-            )
+            ref_per_token_logps = ref_per_token_logps[:, prompt_length - 1:]
 
         # Compute the rewards
         # No need to duplicate prompts as we're not generating multiple completions per prompt
@@ -623,7 +568,7 @@ class OpenVLAGRPOTrainer(Trainer):
         for i, (reward_func, reward_processing_class) in enumerate(
             zip(self.reward_funcs, self.reward_processing_classes)
         ):
-            output_reward_func = reward_func(prompt_completion_ids, inputs["labels"], self.action_tokenizer)
+            output_reward_func = reward_func(completion_ids, inputs["labels"], self.action_tokenizer)
             print(f"{reward_func.__name__} output: {output_reward_func}")
             rewards_per_func[:, i] = torch.tensor(output_reward_func, dtype=torch.float32, device=device)
 
@@ -667,11 +612,10 @@ class OpenVLAGRPOTrainer(Trainer):
         self._metrics["reward_std"].append(self.accelerator.gather_for_metrics(std_grouped_rewards).mean().item())
 
         return {
-            "prompt_completion_ids": prompt_completion_ids,
-            "attention_mask": attention_mask,
-            "prompt_lenghts": prompt_lengths,
+            "prompt_ids": prompt_ids,
+            "prompt_mask": prompt_mask,
+            "completion_ids": completion_ids,
             "completion_mask": completion_mask,
-            "completion_lengths": completion_lengths,
             "old_per_token_logps": old_per_token_logps,
             "ref_per_token_logps": ref_per_token_logps,
             "advantages": advantages,
@@ -679,6 +623,11 @@ class OpenVLAGRPOTrainer(Trainer):
         }
 
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+        # ensure that all samples in the batch are the same
+        for i in range(1, len(inputs["input_ids"])):
+            if not torch.equal(inputs["input_ids"][0], inputs["input_ids"][i]):
+                raise ValueError("All samples in the batch must have the same input_ids")
+        
         if return_outputs:
             raise ValueError("The GRPOTrainer does not support returning outputs")
     
@@ -691,27 +640,18 @@ class OpenVLAGRPOTrainer(Trainer):
         self._step += 1
 
         # Get the prepared inputs
-        # prompt_ids, prompt_mask = inputs["prompt_ids"], inputs["prompt_mask"]
-        # completion_ids, completion_mask = inputs["completion_ids"], inputs["completion_mask"]
-        input_ids = inputs["prompt_completion_ids"]
-        attention_mask = inputs["attention_mask"]
-        prompt_lengths = inputs["prompt_lenghts"]
-        completion_mask = inputs["completion_mask"]
-        completion_lengths = inputs["completion_lengths"]
+        prompt_ids, prompt_mask = inputs["prompt_ids"], inputs["prompt_mask"]
+        completion_ids, completion_mask = inputs["completion_ids"], inputs["completion_mask"]
         multimodal_inputs = inputs["multimodal_inputs"]
         
-        # # Concatenate for full sequence
-        # input_ids = torch.cat([prompt_ids, completion_ids], dim=1)
-        # attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)
+        # Concatenate for full sequence
+        input_ids = torch.cat([prompt_ids, completion_ids], dim=1)
+        attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)
 
         # Get the current policy's log probabilities
         per_token_logps = self._get_per_token_logps(model, input_ids, attention_mask, **multimodal_inputs)
         # Get rid of the prompt (-1 because of the shift done in get_per_token_logps)
-        # per_token_logps = per_token_logps[:, prompt_ids.size(1) - 1:]
-        per_token_logps = remove_prompt_logps(
-            per_token_logps, prompt_lengths, completion_lengths, 
-            input_ids, self.processing_class.pad_token_id
-        )
+        per_token_logps = per_token_logps[:, prompt_ids.size(1) - 1:]
 
         # Get the advantages from inputs
         advantages = inputs["advantages"]
@@ -881,8 +821,6 @@ class OpenVLAGRPOTrainer(Trainer):
             * self.accelerator.num_processes
             * self.args.gradient_accumulation_steps
         )
-        
-        print(f"!!!! RepeatedRandomSampler !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
         
         return RepeatRandomSampler(
             data_source=self.train_dataset,

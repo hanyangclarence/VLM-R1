@@ -865,6 +865,8 @@ class VLMGRPOTrainer(Trainer):
             * self.args.gradient_accumulation_steps
         )
         
+        print(f"!!!! RepeatedRandomSampler !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        
         return RepeatRandomSampler(
             data_source=self.train_dataset,
             mini_repeat_count=self.num_generations,

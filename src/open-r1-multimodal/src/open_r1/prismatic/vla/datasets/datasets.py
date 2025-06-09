@@ -203,7 +203,11 @@ class RLDSDataset(IterableDataset):
         while True:
             try:
                 rlds_batch = next(iterator)
-                yield self.batch_transform(rlds_batch)
+                # yield self.batch_transform(rlds_batch)
+                transformed_batch = self.batch_transform(rlds_batch)
+                for _ in range(8):
+                    yield transformed_batch
+                
             except tf.errors.InvalidArgumentError as e:
                 if "Invalid PNG data" in str(e):
                     print(f"Skipping batch due to invalid PNG data: {str(e)}")
